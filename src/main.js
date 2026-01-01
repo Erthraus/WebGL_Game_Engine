@@ -13,7 +13,10 @@ const projectAssets = [
     { name: "Küre", type: "primitive", id: "sphere", icon: "⚪" },
     { name: "Silindir", type: "primitive", id: "cylinder", icon: "🛢️" },
     { name: "Prizma", type: "primitive", id: "prism", icon: "🔶" },
-    { name: "Araba", type: "model", file: "car.obj", icon: "🚗" },
+    
+    // Araba Modeli
+    { name: "Araba", type: "model", id: "car_model", file: "car.obj", icon: "🚗" },
+    
     { name: "Kutu Doku", type: "texture", file: "box.jpg", icon: "📦" },
 ];
 
@@ -21,6 +24,7 @@ const projectAssets = [
 let gl;
 let programInfo;
 let geometryTemplates = {}; 
+let textureLibrary = {}; 
 let defaultTexture;
 
 let camera;      
@@ -31,8 +35,11 @@ let projectionMatrix = mat4.create();
 const objects = []; 
 let selectedObjectIndex = -1; 
 
-// --- IŞIK SİSTEMİ DEĞİŞKENLERİ ---
-const SHADER_MAX_LIGHTS = 8; // Shader'daki limit ile aynı olmalı
+// Kilit Bayrağı (Sonsuz Döngü Önleyici)
+let isSyncingGUI = false; 
+
+// --- IŞIK SİSTEMİ ---
+const SHADER_MAX_LIGHTS = 8; 
 const lights = [
     { name: "Ana Işık (Güneş)", type: 1, pos: [5, 10, 5], color: [255, 255, 255], intensity: 1.0, isActive: true },
     { name: "Sol Lamba (Kırmızı)", type: 0, pos: [-5, 2, 0], color: [255, 50, 50], intensity: 2.0, isActive: true },
@@ -41,7 +48,8 @@ const lights = [
 let selectedLightIndex = 0;
 
 let gui;
-// GUI State nesnesine yeni fonksiyonlar ekliyoruz
+let transformFolder; // Doku menüsünü yenilemek için global erişim lazım
+
 const guiState = {
     enableDualView: false,
     bgColor: [25, 25, 25],
@@ -57,31 +65,30 @@ const guiState = {
     opacity: 1.0,         
     autoRotate: false,    
     
+    // Texture Dropdown
+    selectedTextureID: "box.jpg", 
+
     // Sis
     fogDensity: 0.02,     
     fogColor: [25, 25, 25], 
     
     // Işık Yönetimi
-    selLightName: 0, // Başlangıç indexi
+    selLightName: 0,
     lType: 1,
     lPosX: 5, lPosY: 10, lPosZ: 5,
     lColor: [255, 255, 255],
     lIntensity: 1.0,
     lActive: true,
     
-    // YENİ: Işık Ekle/Sil Aksiyonları
     addLight: () => addNewLight(),
     delLight: () => deleteSelectedLight(),
     
-    // Bilgi
-    currentTextureName: "Varsayılan",
-
     deleteSelected: () => deleteSelectedObject(),
     importOBJ: () => document.getElementById('objInput').click(),
     importTexture: () => document.getElementById('textureInput').click(),
 };
 
-// --- SHADER GÜNCELLEMESİ (MAX LIGHTS ARTIRILDI & COUNT EKLENDİ) ---
+// --- SHADERLAR ---
 const vsSource = `#version 300 es
     in vec4 aVertexPosition;
     in vec3 aVertexNormal; 
@@ -128,18 +135,16 @@ const fsSource = `#version 300 es
     
     struct Light {
         vec3 position;
-        int type;       // 0: Point, 1: Directional
+        int type;       
         vec3 color;
         float intensity;
         bool isActive;
     };
     
-    // YENİ: Limit artırıldı ve güncel sayı için uniform eklendi
     #define MAX_LIGHTS 8
     uniform Light uLights[MAX_LIGHTS];
-    uniform int uLightCount; // O anki aktif ışık sayısı
+    uniform int uLightCount; 
     
-    // Sis
     uniform vec3 uFogColor;       
     uniform float uFogDensity;    
     
@@ -151,20 +156,18 @@ const fsSource = `#version 300 es
         vec3 lightDir;
         float attenuation = 1.0;
 
-        if(light.type == 1) { // Directional
+        if(light.type == 1) { 
             lightDir = normalize(light.position);
-        } else { // Point
+        } else { 
             vec3 lightVec = light.position - vFragPos;
             float distance = length(lightVec);
             lightDir = normalize(lightVec);
             attenuation = 1.0 / (1.0 + 0.05 * distance * distance); 
         }
 
-        // Diffuse
         float diff = max(dot(normal, lightDir), 0.0);
         vec3 diffuse = diff * light.color;
 
-        // Specular
         vec3 reflectDir = reflect(-lightDir, normal);
         float spec = pow(max(dot(viewDir, reflectDir), 0.0), uShininess);
         vec3 specular = spec * light.color;
@@ -184,16 +187,14 @@ const fsSource = `#version 300 es
         
         vec3 ambient = 0.1 * vec3(1.0, 1.0, 1.0);
         
-        // YENİ: Döngü uLightCount kadar dönecek
         vec3 totalLighting = vec3(0.0);
         for(int i = 0; i < MAX_LIGHTS; i++) {
-            if(i >= uLightCount) break; // Sayıyı aştıysak çık
+            if(i >= uLightCount) break; 
             totalLighting += calcLight(uLights[i], norm, viewDir, texColor.rgb);
         }
         
         vec3 result = (ambient + totalLighting) * texColor.rgb;
         
-        // Sis Efekti
         float fogFactor = 1.0 / exp(pow(vDist * uFogDensity, 2.0));
         fogFactor = clamp(fogFactor, 0.0, 1.0);
         vec3 finalColor = mix(uFogColor, result, fogFactor);
@@ -245,18 +246,18 @@ function main() {
             uSourceColor: shader.getUniformLocation('uSourceColor'),
             uFogColor: shader.getUniformLocation('uFogColor'),      
             uFogDensity: shader.getUniformLocation('uFogDensity'),
-            // YENİ: Işık sayısı uniformu
             uLightCount: shader.getUniformLocation('uLightCount')
         },
     };
 
-    // Geometriler
+    // Temel Geometriler
     geometryTemplates['cube'] = new Cube(gl);
     geometryTemplates['sphere'] = new Sphere(gl, 0.8, 30, 30);
     geometryTemplates['cylinder'] = new Cylinder(gl, 0.6, 1.5, 30);
     geometryTemplates['prism'] = new Cylinder(gl, 0.7, 2.0, 6);
 
     defaultTexture = loadTexture(gl, 'assets/box.jpg');
+    textureLibrary['box.jpg'] = defaultTexture;
 
     camera = new Camera([0, 5, 15], [0, 1, 0], -90, -15);
     topCamera = new Camera([0, 30, 0], [0, 1, 0], -90, -90);
@@ -273,61 +274,199 @@ function generateAssetsPanel() {
     const container = document.getElementById('assetsContainer');
     container.innerHTML = ''; 
 
-    projectAssets.forEach(asset => {
-        const card = document.createElement('div');
-        card.className = 'asset-card';
-        card.innerHTML = `
-            <div class="asset-icon">${asset.icon}</div>
-            <div class="asset-label">${asset.name}</div>
-        `;
-        card.onclick = () => handleAssetClick(asset);
-        container.appendChild(card);
-    });
-
-    const divider = document.createElement('div');
-    divider.style = "width:1px; height:50px; background:#444; margin:0 5px;";
-    container.appendChild(divider);
-
+    // 1. GRUP: ARAÇLAR
+    const toolsGroup = createAssetGroup("Araçlar");
     const importTools = [
         { name: "Import OBJ", icon: "📂", action: () => document.getElementById('objInput').click() },
-        { name: "Import IMG", icon: "🎨", action: () => document.getElementById('textureInput').click() },
-        { name: "Temizle", icon: "🗑️", action: () => { if(confirm('Sil?')) { objects.length=0; updateGUIList(); } }, style: "border-color:#f44" }
+        { name: "Import IMG", icon: "🖼️", action: () => document.getElementById('textureInput').click() },
+        { name: "Temizle", icon: "🗑️", action: () => { if(confirm('Sahne temizlensin mi?')) { objects.length=0; updateGUIList(); syncGUItoObject(); } }, isDanger: true }
     ];
-
     importTools.forEach(tool => {
-        const card = document.createElement('div');
-        card.className = 'asset-card';
-        if(tool.style) card.style = tool.style;
-        card.innerHTML = `<div class="asset-icon">${tool.icon}</div><div class="asset-label">${tool.name}</div>`;
+        const card = createAssetCardDOM(tool.name, tool.icon, tool.isDanger);
         card.onclick = tool.action;
-        container.appendChild(card);
+        toolsGroup.querySelector('.group-content').appendChild(card);
     });
+    container.appendChild(toolsGroup);
+
+    // 2. GRUP: 3D MODELLER
+    const modelsGroup = createAssetGroup("3D Modeller");
+    const models = projectAssets.filter(a => ['primitive', 'model', 'custom_model'].includes(a.type));
+    models.forEach(asset => {
+        const card = createAssetCardDOM(asset.name, asset.icon);
+        card.onclick = () => handleAssetClick(asset);
+        modelsGroup.querySelector('.group-content').appendChild(card);
+    });
+    container.appendChild(modelsGroup);
+
+    // 3. GRUP: DOKULAR
+    const texturesGroup = createAssetGroup("Dokular");
+    const textures = projectAssets.filter(a => ['texture', 'custom_texture'].includes(a.type));
+    textures.forEach(asset => {
+        const card = createAssetCardDOM(asset.name, asset.icon);
+        card.onclick = () => handleAssetClick(asset);
+        texturesGroup.querySelector('.group-content').appendChild(card);
+    });
+    container.appendChild(texturesGroup);
 }
 
+function createAssetGroup(title) {
+    const group = document.createElement('div');
+    group.className = 'asset-group';
+    const header = document.createElement('div');
+    header.className = 'group-header';
+    header.innerHTML = title;
+    const content = document.createElement('div');
+    content.className = 'group-content';
+    group.appendChild(header);
+    group.appendChild(content);
+    return group;
+}
+
+function createAssetCardDOM(name, icon, isDanger = false) {
+    const card = document.createElement('div');
+    card.className = 'asset-card';
+    if(isDanger) card.classList.add('danger');
+    card.innerHTML = `<div class="asset-icon">${icon}</div><div class="asset-label" title="${name}">${name}</div>`;
+    return card;
+}
+
+// --- ASSET CLICK ---
 function handleAssetClick(asset) {
-    if (asset.type === 'primitive') {
-        spawnObject(asset.id, asset.name);
+    // 1. Primitive ve Custom Model
+    if (asset.type === 'primitive' || asset.type === 'custom_model') {
+        const obj = spawnObject(asset.id, asset.name);
+        finalizeObjectSpawn(obj, asset);
     } 
+    // 2. Dış Dosya (Araba)
     else if (asset.type === 'model') {
-        ObjLoader.load(gl, 'assets/' + asset.file)
-            .then(mesh => {
-                const newObj = addObjectToScene(asset.name, 'custom', [0, 2, 0]);
-                newObj.model = mesh;
-                newObj.scale = [0.5, 0.5, 0.5];
-                selectLastObject();
-            })
-            .catch(err => alert("Model yüklenemedi: assets/" + asset.file));
-    }
-    else if (asset.type === 'texture') {
-        if (selectedObjectIndex === -1 || !objects[selectedObjectIndex]) {
-            alert("Önce bir obje seçmelisin!");
-            return;
+        
+        // Önce hafıza kontrolü
+        if (geometryTemplates[asset.id]) {
+            const obj = spawnObject(asset.id, asset.name);
+            finalizeObjectSpawn(obj, asset);
+        } 
+        else {
+            const path = 'assets/' + asset.file;
+            ObjLoader.load(gl, path)
+                .then(mesh => {
+                    geometryTemplates[asset.id] = mesh;
+                    const obj = spawnObject(asset.id, asset.name);
+                    finalizeObjectSpawn(obj, asset);
+                })
+                .catch(err => {
+                    console.error("OBJ Yüklenirken hata oluştu:", err);
+                    alert(`HATA: '${asset.file}' yüklenemedi. 'assets' klasörünü kontrol edin.`);
+                });
         }
-        const texture = loadTexture(gl, 'assets/' + asset.file);
-        objects[selectedObjectIndex].texture = texture;
-        objects[selectedObjectIndex].textureName = asset.name; 
-        syncGUItoObject();
     }
+    // 3. Dokular
+    else if (asset.type === 'texture' || asset.type === 'custom_texture') {
+        applyTextureToSelected(asset);
+    }
+}
+
+// --- SON İŞLEMLER ---
+function finalizeObjectSpawn(obj, asset) {
+    if(!obj) return;
+
+    // Araba modeli için özel boyutlandırma
+    if (asset.id === 'car_model') {
+        obj.scale = [0.2, 0.2, 0.2];
+    }
+
+    // Listeyi güncelle (Kilide dikkat edilecek)
+    updateGUIList();
+
+    // Bu objeyi seç
+    selectedObjectIndex = objects.length - 1;
+
+    // GUI'yi yeni değerlerle eşitle
+    syncGUItoObject();
+}
+
+function applyTextureToSelected(assetData) {
+    if (selectedObjectIndex === -1 || !objects[selectedObjectIndex]) {
+        alert("Önce bir obje seçmelisin!");
+        return;
+    }
+    let targetTexture;
+    let textureID;
+    if (assetData.type === 'custom_texture' || assetData.id) {
+        if(textureLibrary[assetData.id]) {
+            targetTexture = textureLibrary[assetData.id];
+            textureID = assetData.id;
+        } else if(assetData.type === 'texture') {
+             targetTexture = loadTexture(gl, 'assets/' + assetData.file);
+             textureLibrary[assetData.file] = targetTexture;
+             textureID = assetData.file;
+        }
+    } else {
+        targetTexture = defaultTexture;
+        textureID = "box.jpg";
+    }
+    objects[selectedObjectIndex].texture = targetTexture;
+    objects[selectedObjectIndex].textureID = textureID;
+    syncGUItoObject();
+}
+
+
+// --- DOSYA YÜKLEME ---
+function formatFileName(fileName) {
+    let name = fileName.replace(/\.[^/.]+$/, "");
+    name = name.replace(/_/g, " ");
+    return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+function setupFileInputs() {
+    document.getElementById('objInput').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const cleanName = formatFileName(file.name);
+        const uniqueId = 'model_' + Date.now(); 
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const data = ObjLoader.parse(e.target.result);
+            const mesh = ObjLoader.createMesh(gl, data);
+            geometryTemplates[uniqueId] = mesh;
+            
+            const newAsset = { name: cleanName, type: 'custom_model', id: uniqueId, icon: "✨" };
+            projectAssets.push(newAsset);
+            
+            generateAssetsPanel();
+            const obj = spawnObject(uniqueId, cleanName);
+            finalizeObjectSpawn(obj, newAsset);
+        };
+        reader.readAsText(file);
+        this.value = '';
+    });
+
+    document.getElementById('textureInput').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const cleanName = formatFileName(file.name);
+        const uniqueId = 'tex_' + Date.now();
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const img = new Image();
+            img.onload = function() {
+                const newTex = gl.createTexture();
+                gl.bindTexture(gl.TEXTURE_2D, newTex);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+                gl.generateMipmap(gl.TEXTURE_2D);
+                textureLibrary[uniqueId] = newTex;
+                const assetData = { name: cleanName, type: 'custom_texture', id: uniqueId, icon: "🖼️" };
+                projectAssets.push(assetData);
+                
+                generateAssetsPanel();
+                updateGUITextureList(); // Listeyi güncelle
+                
+                if (selectedObjectIndex !== -1) { applyTextureToSelected(assetData); }
+            };
+            img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+        this.value = '';
+    });
 }
 
 // --- NESNE YÖNETİMİ ---
@@ -343,25 +482,28 @@ function addObjectToScene(name, type, position) {
         type: type, 
         position: position || [0, 0, 0],
         rotation: [0, 0, 0],
-        scale: [1, 1, 1],
+        scale: [1, 1, 1], 
         texture: defaultTexture,
-        textureName: "Varsayılan", 
+        textureID: "box.jpg", 
         shininess: 32.0,
         opacity: 1.0,
         autoRotate: false,
         model: geometryTemplates[type] || null 
     };
     objects.push(obj);
-    updateGUIList(); 
     return obj;
 }
 
 function spawnObject(type, baseName) {
     const x = (Math.random() - 0.5) * 10;
     const z = (Math.random() - 0.5) * 10;
+    if (!geometryTemplates[type]) {
+        console.error("Geometry type not found:", type);
+        return null;
+    }
     const name = baseName || (type.charAt(0).toUpperCase() + type.slice(1));
-    addObjectToScene(name, type, [x, 0, z]);
-    selectLastObject();
+    const obj = addObjectToScene(name, type, [x, 0, z]);
+    return obj; 
 }
 
 function selectLastObject() {
@@ -377,24 +519,13 @@ function deleteSelectedObject() {
     syncGUItoObject();
 }
 
-// --- YENİ: IŞIK EKLEME/SİLME FONKSİYONLARI ---
 function addNewLight() {
     if (lights.length >= SHADER_MAX_LIGHTS) {
         alert(`Maksimum ışık sayısına (${SHADER_MAX_LIGHTS}) ulaşıldı!`);
         return;
     }
-    
     const newId = lights.length + 1;
-    lights.push({
-        name: `Yeni Işık ${newId}`,
-        type: 0, // Point
-        pos: [0, 5, 0],
-        color: [255, 255, 255],
-        intensity: 1.0,
-        isActive: true
-    });
-    
-    // Yeni ekleneni seç
+    lights.push({ name: `Yeni Işık ${newId}`, type: 0, pos: [0, 5, 0], color: [255, 255, 255], intensity: 1.0, isActive: true });
     selectedLightIndex = lights.length - 1;
     updateGUILightList();
     syncGUItoLight();
@@ -405,22 +536,16 @@ function deleteSelectedLight() {
         alert("En az bir ışık kalmalı!");
         return;
     }
-    
     lights.splice(selectedLightIndex, 1);
-    
-    // Indexi ayarla
-    if (selectedLightIndex >= lights.length) {
-        selectedLightIndex = lights.length - 1;
-    }
-    
+    if (selectedLightIndex >= lights.length) selectedLightIndex = lights.length - 1;
     updateGUILightList();
     syncGUItoLight();
 }
 
-
 // --- GUI MANTIĞI ---
 let objListController;
-let lightListController; // Işık listesi kontrolcüsünü global yapıyoruz
+let lightListController; 
+let textureListController; 
 
 function initGUI() {
     gui = new dat.GUI({ width: 320 });
@@ -435,6 +560,9 @@ function initGUI() {
     const objNames = {}; 
     objListController = mainFolder.add(guiState, 'selectedName', objNames).name('SEÇİLİ OBJE')
         .onChange((val) => {
+            // KRİTİK: Eğer kod tarafından güncelleniyorsa (spawn sırasında) döngüye girme!
+            if (isSyncingGUI) return; 
+            
             selectedObjectIndex = parseInt(val);
             syncGUItoObject(); 
         });
@@ -442,7 +570,8 @@ function initGUI() {
     mainFolder.open();
 
     // TRANSFORM
-    const transformFolder = gui.addFolder('Transform & Materyal');
+    // Global transformFolder'a ata ki texture update yapabilelim
+    transformFolder = gui.addFolder('Transform & Materyal');
     transformFolder.add(guiState, 'posX', -50, 50).name('Pos X').onChange(updateObjectFromGUI);
     transformFolder.add(guiState, 'posY', -50, 50).name('Pos Y').onChange(updateObjectFromGUI);
     transformFolder.add(guiState, 'posZ', -50, 50).name('Pos Z').onChange(updateObjectFromGUI);
@@ -453,23 +582,15 @@ function initGUI() {
     transformFolder.add(guiState, 'shininess', 1, 256).name('Parlaklık').onChange(updateObjectFromGUI);
     transformFolder.add(guiState, 'opacity', 0.0, 1.0).name('Şeffaflık').onChange(updateObjectFromGUI);
     transformFolder.add(guiState, 'autoRotate').name('Otomatik Dön').onChange(updateObjectFromGUI);
-    transformFolder.add(guiState, 'currentTextureName').name('Aktif Doku').listen(); 
+    
     transformFolder.open();
 
-    // YENİ: IŞIK YÖNETİMİ GUI GÜNCELLEMESİ
+    // IŞIK YÖNETİMİ
     const lightFolder = gui.addFolder('Işık Yönetimi (Dinamik)');
-    
-    // Işık Ekleme/Silme Butonları
     lightFolder.add(guiState, 'addLight').name('✨ Yeni Işık Ekle');
     lightFolder.add(guiState, 'delLight').name('❌ Seçili Işığı Sil');
-    
-    // Işık Seçim Dropdown (Başlangıçta boş, updateGUILightList dolduracak)
     lightListController = lightFolder.add(guiState, 'selLightName', {}).name('SEÇİLİ IŞIK')
-        .onChange((val) => {
-            selectedLightIndex = parseInt(val);
-            syncGUItoLight();
-        });
-
+        .onChange((val) => { selectedLightIndex = parseInt(val); syncGUItoLight(); });
     lightFolder.add(guiState, 'lActive').name('Açık/Kapalı').onChange(updateLightFromGUI);
     lightFolder.add(guiState, 'lType', { "Noktasal (Point)": 0, "Yönlü (Dir)": 1 }).name('Tipi').onChange(updateLightFromGUI);
     lightFolder.addColor(guiState, 'lColor').name('Rengi').onChange(updateLightFromGUI);
@@ -479,25 +600,48 @@ function initGUI() {
     lightFolder.add(guiState, 'lPosZ', -50, 50).name('Pos Z').onChange(updateLightFromGUI);
     lightFolder.open();
 
-    // Başlangıç senkronizasyonu
+    // Başlangıç güncellemeleri
     updateGUILightList();
+    updateGUITextureList(); // Bu artık "refreshTextureController" gibi davranacak
     syncGUItoLight();
 }
 
-// YENİ: Işık Listesini GUI'de Güncelleme Fonksiyonu
+// YENİ: Doku Kontrolcüsünü Silip Baştan Yaratan Fonksiyon
+function updateGUITextureList() {
+    // Eğer eski kontrolcü varsa sil
+    if (textureListController) {
+        transformFolder.remove(textureListController);
+    }
+    
+    // Tüm doku seçeneklerini hazırla { "İsim": "ID" }
+    const texOptions = {};
+    const textures = projectAssets.filter(a => ['texture', 'custom_texture'].includes(a.type));
+    textures.forEach(t => {
+        texOptions[t.name] = t.id || t.file;
+    });
+
+    // Yeni kontrolcüyü ekle
+    textureListController = transformFolder.add(guiState, 'selectedTextureID', texOptions)
+        .name('Doku Seç')
+        .onChange((val) => {
+             // Kilit kontrolü
+             if (isSyncingGUI) return;
+
+             const asset = projectAssets.find(a => a.id === val || a.file === val);
+             if(asset) { applyTextureToSelected(asset); }
+        });
+}
+
 function updateGUILightList() {
     if (!lightListController) return;
     const select = lightListController.domElement.querySelector('select');
     select.innerHTML = '';
-    
     lights.forEach((l, i) => {
         const opt = document.createElement('option');
         opt.value = i;
         opt.text = l.name; 
         select.add(opt);
     });
-    
-    // Seçili indexi güncelle ve GUI'ye yansıt
     lightListController.setValue(selectedLightIndex);
     guiState.selLightName = selectedLightIndex;
 }
@@ -506,25 +650,32 @@ function updateGUIList() {
     if (!objListController) return;
     const select = objListController.domElement.querySelector('select');
     select.innerHTML = '';
-    
     const defaultOpt = document.createElement('option');
     defaultOpt.value = -1;
     defaultOpt.text = objects.length === 0 ? "(Sahne Boş)" : "(Obje Seçin)";
     select.add(defaultOpt);
-
     objects.forEach((o, i) => {
         const opt = document.createElement('option');
         opt.value = i;
         opt.text = o.name; 
         select.add(opt);
     });
+    
+    // KİLİT: Burada değeri değiştirince onChange tetiklenmesin
+    isSyncingGUI = true;
     objListController.setValue(selectedObjectIndex);
+    isSyncingGUI = false;
 }
 
 function syncGUItoObject() {
+    // KİLİT: Döngü engelleme başlangıcı
+    isSyncingGUI = true;
+
     if (selectedObjectIndex === -1 || !objects[selectedObjectIndex]) {
         guiState.selectedName = -1;
-        guiState.currentTextureName = "-";
+        guiState.selectedTextureID = ""; 
+        gui.updateDisplay();
+        isSyncingGUI = false;
         return;
     }
     const obj = objects[selectedObjectIndex];
@@ -538,8 +689,20 @@ function syncGUItoObject() {
     guiState.shininess = obj.shininess || 32.0;
     guiState.opacity = obj.opacity !== undefined ? obj.opacity : 1.0;
     guiState.autoRotate = !!obj.autoRotate;
-    guiState.currentTextureName = obj.textureName || "Varsayılan";
+    
+    // Texture değerini güncelle
+    if(obj.textureID) {
+        guiState.selectedTextureID = obj.textureID;
+    }
+    
+    // Tüm paneli görsel olarak yenile
     gui.updateDisplay();
+    
+    // Dropdown listesini manuel güncelle (setValue, onChange'i tetikleyebilir ama kilit var)
+    objListController.setValue(selectedObjectIndex);
+
+    // KİLİT AÇ
+    isSyncingGUI = false;
 }
 
 function updateObjectFromGUI() {
@@ -580,56 +743,8 @@ function updateLightFromGUI() {
     l.pos = [guiState.lPosX, guiState.lPosY, guiState.lPosZ];
 }
 
-// --- DOSYA YÜKLEME ---
-function formatFileName(fileName) {
-    let name = fileName.replace(/\.[^/.]+$/, "");
-    name = name.replace(/_/g, " ");
-    return name.charAt(0).toUpperCase() + name.slice(1);
-}
-
-function setupFileInputs() {
-    document.getElementById('objInput').addEventListener('change', function(e) {
-        const file = e.target.files[0];
-        if (!file) return;
-        const cleanName = formatFileName(file.name);
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            const data = ObjLoader.parse(e.target.result);
-            const mesh = ObjLoader.createMesh(gl, data);
-            const newObj = addObjectToScene(cleanName, 'custom', [0, 2, 0]);
-            newObj.model = mesh;
-            selectLastObject();
-        };
-        reader.readAsText(file);
-        this.value = '';
-    });
-
-    document.getElementById('textureInput').addEventListener('change', function(e) {
-        const file = e.target.files[0];
-        if (!file) return;
-        const cleanName = formatFileName(file.name);
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            const img = new Image();
-            img.onload = function() {
-                const newTex = gl.createTexture();
-                gl.bindTexture(gl.TEXTURE_2D, newTex);
-                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-                gl.generateMipmap(gl.TEXTURE_2D);
-                if (selectedObjectIndex !== -1) {
-                    objects[selectedObjectIndex].texture = newTex;
-                    objects[selectedObjectIndex].textureName = cleanName; 
-                    syncGUItoObject(); 
-                }
-            };
-            img.src = e.target.result;
-        };
-        reader.readAsDataURL(file);
-        this.value = '';
-    });
-}
-
 function loadTexture(gl, url) {
+    if(textureLibrary[url]) return textureLibrary[url];
     const texture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, texture);
     const pixel = new Uint8Array([128, 128, 128, 255]); 
@@ -641,6 +756,7 @@ function loadTexture(gl, url) {
         gl.generateMipmap(gl.TEXTURE_2D);
     };
     image.src = url;
+    textureLibrary[url] = texture;
     return texture;
 }
 
@@ -667,7 +783,6 @@ function render(now) {
     if (guiState.enableDualView) {
         gl.enable(gl.SCISSOR_TEST);
         const halfWidth = width / 2;
-        
         gl.viewport(0, 0, halfWidth, height);
         gl.scissor(0, 0, halfWidth, height);
         gl.clearColor(r, g, b, 1.0);
@@ -705,34 +820,28 @@ function drawScene(now, activeCamera, projectionUpdateFn) {
     gl.uniformMatrix4fv(programInfo.uniformLocations.viewMatrix, false, viewMatrix);
     gl.uniform3fv(programInfo.uniformLocations.viewPosition, activeCamera.position);
     
-    // Sis
     const fogR = guiState.fogColor[0] / 255;
     const fogG = guiState.fogColor[1] / 255;
     const fogB = guiState.fogColor[2] / 255;
     gl.uniform3f(programInfo.uniformLocations.uFogColor, fogR, fogG, fogB);
     gl.uniform1f(programInfo.uniformLocations.uFogDensity, guiState.fogDensity);
 
-    // YENİ: Aktif ışık sayısını shader'a gönder
     const activeLightCount = Math.min(lights.length, SHADER_MAX_LIGHTS);
     gl.uniform1i(programInfo.uniformLocations.uLightCount, activeLightCount);
 
-    // --- IŞIKLARI SHADER'A GÖNDER (Döngü artık dinamik) ---
     for(let i=0; i < activeLightCount; i++) {
         const l = lights[i];
         const base = `uLights[${i}]`;
         
-        // Not: Performans için bu getUniformLocation çağrıları normalde init aşamasında cache'lenmelidir.
         gl.uniform3f(gl.getUniformLocation(programInfo.program, `${base}.position`), l.pos[0], l.pos[1], l.pos[2]);
         gl.uniform1i(gl.getUniformLocation(programInfo.program, `${base}.type`), l.type);
         gl.uniform3f(gl.getUniformLocation(programInfo.program, `${base}.color`), l.color[0]/255, l.color[1]/255, l.color[2]/255);
         gl.uniform1f(gl.getUniformLocation(programInfo.program, `${base}.intensity`), l.intensity);
         gl.uniform1i(gl.getUniformLocation(programInfo.program, `${base}.isActive`), l.isActive ? 1 : 0);
         
-        // IŞIK GÖRSELİ (KÜP) ÇİZİMİ
         if(l.isActive) { 
             gl.uniform1i(programInfo.uniformLocations.uIsLightSource, 1);
             gl.uniform3f(programInfo.uniformLocations.uSourceColor, l.color[0]/255, l.color[1]/255, l.color[2]/255);
-            
             let lightModel = mat4.create();
             mat4.translate(lightModel, lightModel, l.pos);
             mat4.scale(lightModel, lightModel, [0.2, 0.2, 0.2]);
@@ -743,7 +852,6 @@ function drawScene(now, activeCamera, projectionUpdateFn) {
         }
     }
 
-    // --- DİĞER OBJELERİ ÇİZ ---
     gl.uniform1i(programInfo.uniformLocations.uIsLightSource, 0);
 
     objects.forEach(obj => {
@@ -765,9 +873,9 @@ function drawScene(now, activeCamera, projectionUpdateFn) {
              if(objects[selectedObjectIndex] === obj) guiState.rotY = obj.rotation[1];
         }
         
-        mat4.rotate(modelMatrix, modelMatrix, obj.rotation[1] * Math.PI / 180, [0, 1, 0]); // Y (Yaw)
-        mat4.rotate(modelMatrix, modelMatrix, obj.rotation[0] * Math.PI / 180, [1, 0, 0]); // X (Pitch)
-        mat4.rotate(modelMatrix, modelMatrix, obj.rotation[2] * Math.PI / 180, [0, 0, 1]); // Z (Roll)
+        mat4.rotate(modelMatrix, modelMatrix, obj.rotation[1] * Math.PI / 180, [0, 1, 0]); 
+        mat4.rotate(modelMatrix, modelMatrix, obj.rotation[0] * Math.PI / 180, [1, 0, 0]); 
+        mat4.rotate(modelMatrix, modelMatrix, obj.rotation[2] * Math.PI / 180, [0, 0, 1]); 
         mat4.scale(modelMatrix, modelMatrix, obj.scale);
 
         let normalMatrix = mat3.create();
