@@ -47,3 +47,87 @@ canvas {
     font-weight: bold;
     color: white;
 }
+
+/* --- ASSETS PANEL (ALT BAR) --- */
+#assets-panel {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 140px;
+    background-color: #202020;
+    border-top: 2px solid #333;
+    display: flex;
+    flex-direction: column;
+    z-index: 10; /* Canvas'ın üstünde durması için */
+    font-family: 'Segoe UI', sans-serif;
+    box-shadow: 0 -4px 10px rgba(0,0,0,0.5);
+}
+
+.panel-header {
+    background-color: #2a2a2a;
+    color: #bbb;
+    padding: 5px 15px;
+    font-size: 12px;
+    font-weight: bold;
+    border-bottom: 1px solid #333;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.assets-container {
+    display: flex;
+    align-items: center;
+    padding: 15px;
+    gap: 15px;
+    overflow-x: auto; /* Çok asset olursa yana kaydır */
+    height: 100%;
+}
+
+/* Asset Kartı Tasarımı */
+.asset-card {
+    width: 80px;
+    height: 80px;
+    background-color: #333;
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: 1px solid #444;
+    color: #ccc;
+    position: relative;
+}
+
+.asset-card:hover {
+    background-color: #444;
+    border-color: #00ffcc;
+    transform: translateY(-2px);
+    color: #fff;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+}
+
+.asset-card:active {
+    transform: translateY(0);
+}
+
+.asset-icon {
+    font-size: 28px;
+    margin-bottom: 5px;
+}
+
+.asset-label {
+    font-size: 11px;
+    text-align: center;
+}
+
+/* Kartların üzerine gelince açıklama çıkması için opsiyonel */
+.asset-card::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    border-radius: 6px;
+    border: 2px solid transparent;
+}
