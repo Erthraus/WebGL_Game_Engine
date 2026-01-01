@@ -3,9 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>BBM 414 WebGL2 Project</title>
-    
     <link rel="stylesheet" href="style.css">
-    
     <style>
         body { margin: 0; overflow: hidden; }
         canvas { display: block; width: 100vw; height: 100vh; }
@@ -24,43 +22,7 @@
 
     <div id="assets-panel">
         <div class="panel-header">Assets Browser</div>
-        <div class="assets-container">
-            
-            <div class="asset-card" id="btnSpawnCube">
-                <div class="asset-icon">🧊</div>
-                <div class="asset-label">Küp</div>
-            </div>
-            <div class="asset-card" id="btnSpawnSphere">
-                <div class="asset-icon">⚪</div>
-                <div class="asset-label">Küre</div>
-            </div>
-            <div class="asset-card" id="btnSpawnCylinder">
-                <div class="asset-icon">🛢️</div>
-                <div class="asset-label">Silindir</div>
-            </div>
-
-            <div style="width:1px; height:50px; background:#444; margin:0 5px;"></div>
-
-            <div class="asset-card" id="btnImportModel">
-                <div class="asset-icon">📂</div>
-                <div class="asset-label">Model Yükle</div>
-            </div>
-            <div class="asset-card" id="btnImportTexture">
-                <div class="asset-icon">🎨</div>
-                <div class="asset-label">Doku Seç</div>
-            </div>
-
-            <div style="width:1px; height:50px; background:#444; margin:0 5px;"></div>
-
-             <div class="asset-card" id="btnRemoveSelected" style="border-color: #ff8800;">
-                <div class="asset-icon">❌</div>
-                <div class="asset-label">Sil</div>
-            </div>
-             <div class="asset-card" id="btnClearScene" style="border-color: #ff4444;">
-                <div class="asset-icon">🗑️</div>
-                <div class="asset-label">Temizle</div>
-            </div>
-        </div>
+        <div class="assets-container" id="assetsContainer"></div>
     </div>
     
     <input type="file" id="objInput" accept=".obj" style="display: none;">
@@ -68,7 +30,6 @@
     
     <script src="lib/gl-matrix-min.js"></script> 
     <script src="lib/dat.gui.min.js"></script>
-    
     <script src="src/main.js" type="module"></script>
 </body>
 </html>

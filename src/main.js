@@ -7,10 +7,26 @@ import { ObjLoader } from './core/ObjLoader.js';
 
 const { mat4, mat3 } = glMatrix; 
 
+// --- 1. PROJE DOSYALARI LİSTESİ (Manuel Tanımlama) ---
+// Tarayıcı klasörü okuyamadığı için assets klasöründeki dosyaları buraya yazmalısınız.
+const projectAssets = [
+    // Hazır Şekiller (Procedural)
+    { name: "Küp", type: "primitive", id: "cube", icon: "🧊" },
+    { name: "Küre", type: "primitive", id: "sphere", icon: "⚪" },
+    { name: "Silindir", type: "primitive", id: "cylinder", icon: "🛢️" },
+    
+    // Klasördeki OBJ Modelleri
+    { name: "Araba", type: "model", file: "car.obj", icon: "🚗" },
+    { name: "Çaydanlık", type: "model", file: "teapot.obj", icon: "🫖" }, 
+    
+    // Klasördeki Dokular (Textures)
+    { name: "Kutu Doku", type: "texture", file: "box.jpg", icon: "📦" },
+    // { name: "Duvar", type: "texture", file: "wall.jpg", icon: "🧱" }, // Örnek
+];
+
 // --- Global Değişkenler ---
 let gl;
 let programInfo;
-// Geometri şablonları (Tekrar tekrar buffer oluşturmamak için)
 let geometryTemplates = {}; 
 let defaultTexture;
 
@@ -19,30 +35,26 @@ let topCamera;
 const keysPressed = {}; 
 let projectionMatrix = mat4.create();
 
-// YENİ: Sahnedeki Tüm Objeler Burada Tutulacak
 const objects = []; 
-let selectedObjectIndex = 0; // Şu an düzenlenen objenin indisi
+let selectedObjectIndex = -1; // Hiçbir şey seçili değil
 
 let gui;
-// GUI ile senkronize çalışacak geçici ayarlar
 const guiState = {
-    // Genel
     enableDualView: false,
     bgColor: [25, 25, 25],
+    selectedName: "Yok",
     
-    // Seçim
-    selectedName: "", // Dropdown menüsü için
-    
-    // Transform (Seçili obje için)
     posX: 0, posY: 0, posZ: 0,
     scale: 1,
     rotX: 0, rotY: 0, rotZ: 0,
     
-    // Işık
-    lightX: 5, lightY: 10, lightZ: 5
+    lightX: 5, lightY: 10, lightZ: 5,
+
+    deleteSelected: () => deleteSelectedObject(),
+    importOBJ: () => document.getElementById('objInput').click(),
+    importTexture: () => document.getElementById('textureInput').click(),
 };
 
-// Shader kodları (Aynı)
 const vsSource = `#version 300 es
     in vec4 aVertexPosition;
     in vec3 aVertexNormal; 
@@ -107,10 +119,11 @@ function main() {
         }
     });
 
-    setupAssetsPanel(); // HTML butonlarını bağla
-    setupFileInputs();  // Dosya yüklemeyi bağla
+    setupFileInputs();
+    
+    // YENİ: Asset panelini oluştur
+    generateAssetsPanel();
 
-    // Shader Başlatma
     const shader = new ShaderProgram(gl, vsSource, fsSource);
     programInfo = {
         program: shader.program,
@@ -130,85 +143,138 @@ function main() {
         },
     };
 
-    // --- BAŞLANGIÇ NESNELERİ ---
-    // Geometreleri bir kez oluşturup şablonda saklayalım
+    // Geometri Şablonları
     geometryTemplates['cube'] = new Cube(gl);
     geometryTemplates['sphere'] = new Sphere(gl, 0.8, 30, 30);
     geometryTemplates['cylinder'] = new Cylinder(gl, 0.6, 1.5, 30);
-    // Prizma aslında 6 segmentli silindirdir
     geometryTemplates['prism'] = new Cylinder(gl, 0.7, 2.0, 6);
 
+    // Varsayılan texture (Box.jpg yoksa gri renk)
     defaultTexture = loadTexture(gl, 'assets/box.jpg');
 
-    // Sahneye varsayılan objeleri ekle
-    addObjectToScene('Küp', 'cube', [-2.5, 0, 0]);
-    addObjectToScene('Küre', 'sphere', [0, 0, 0]);
-    addObjectToScene('Silindir', 'cylinder', [2.5, 0, 0]);
-    addObjectToScene('Prizma', 'prism', [-5.0, 0, 0]);
-
-    // Araba Modeli (Varsayılan olarak yüklenmeye çalışır)
-    ObjLoader.load(gl, 'assets/car.obj').then(mesh => {
-        const carObj = addObjectToScene('Araba', 'custom', [0, 0, -3]);
-        carObj.model = mesh; 
-        carObj.scale = [0.5, 0.5, 0.5];
-        // Yüklendiği an seçimi güncelle
-        syncGUItoObject();
-    }).catch(e => console.log("Varsayılan model (car.obj) bulunamadı veya yüklenemedi."));
+    // --- SAHNE ARTIK BOŞ BAŞLIYOR ---
+    // addObjectToScene(...) satırları silindi.
 
     camera = new Camera([0, 2, 10], [0, 1, 0], -90, 0);
     topCamera = new Camera([0, 20, 0], [0, 1, 0], -90, -90);
 
-    initGUI(); // Arayüzü başlat
+    initGUI(); 
 
     requestAnimationFrame(render);
 }
 
+// --- ASSETS PANEL OLUŞTURUCU (YENİ) ---
+function generateAssetsPanel() {
+    const container = document.getElementById('assetsContainer');
+    container.innerHTML = ''; // Temizle
+
+    // 1. Listeden kartları oluştur
+    projectAssets.forEach(asset => {
+        const card = document.createElement('div');
+        card.className = 'asset-card';
+        card.innerHTML = `
+            <div class="asset-icon">${asset.icon}</div>
+            <div class="asset-label">${asset.name}</div>
+        `;
+        
+        // Tıklama Olayları
+        card.onclick = () => handleAssetClick(asset);
+        
+        container.appendChild(card);
+    });
+
+    // 2. Ayırıcı
+    const divider = document.createElement('div');
+    divider.style = "width:1px; height:50px; background:#444; margin:0 5px;";
+    container.appendChild(divider);
+
+    // 3. Sabit Import Araçları (Ekstra)
+    const importTools = [
+        { name: "Import OBJ", icon: "📂", action: () => document.getElementById('objInput').click() },
+        { name: "Import IMG", icon: "🎨", action: () => document.getElementById('textureInput').click() },
+        { name: "Temizle", icon: "🗑️", action: () => { if(confirm('Sil?')) { objects.length=0; updateGUIList(); } }, style: "border-color:#f44" }
+    ];
+
+    importTools.forEach(tool => {
+        const card = document.createElement('div');
+        card.className = 'asset-card';
+        if(tool.style) card.style = tool.style;
+        card.innerHTML = `<div class="asset-icon">${tool.icon}</div><div class="asset-label">${tool.name}</div>`;
+        card.onclick = tool.action;
+        container.appendChild(card);
+    });
+}
+
+// Asset'e tıklanınca ne olacağını belirle
+function handleAssetClick(asset) {
+    if (asset.type === 'primitive') {
+        // Küp, Küre vb. ekle
+        spawnObject(asset.id);
+    } 
+    else if (asset.type === 'model') {
+        // OBJ dosyasını assets klasöründen yükle
+        // Not: Dosyanın gerçekten orada olması lazım
+        ObjLoader.load(gl, 'assets/' + asset.file)
+            .then(mesh => {
+                const name = asset.name + " " + (objects.length + 1);
+                const newObj = addObjectToScene(name, 'custom', [0, 2, 0]);
+                newObj.model = mesh;
+                newObj.scale = [0.5, 0.5, 0.5];
+                selectLastObject();
+            })
+            .catch(err => alert("Model yüklenemedi: assets/" + asset.file + "\nDosya var mı?"));
+    }
+    else if (asset.type === 'texture') {
+        // Doku dosyasını yükle ve SEÇİLİ objeye uygula
+        if (selectedObjectIndex === -1 || !objects[selectedObjectIndex]) {
+            alert("Önce bir obje seçmelisin!");
+            return;
+        }
+        
+        const texture = loadTexture(gl, 'assets/' + asset.file);
+        objects[selectedObjectIndex].texture = texture;
+    }
+}
+
 // --- NESNE YÖNETİMİ ---
 
-// Sahneye yeni bir obje ekler ve listeye kaydeder
 function addObjectToScene(name, type, position) {
     const obj = {
         name: name,
-        type: type, // 'cube', 'sphere', 'custom' vb.
+        type: type, 
         position: position || [0, 0, 0],
-        rotation: [0, 0, 0], // Derece cinsinden [x, y, z]
+        rotation: [0, 0, 0], 
         scale: [1, 1, 1],
         texture: defaultTexture,
-        model: geometryTemplates[type] || null // Render edilecek asıl veri
+        model: geometryTemplates[type] || null 
     };
     objects.push(obj);
-    updateGUIList(); // GUI listesini güncelle
+    updateGUIList(); 
     return obj;
 }
 
-// Assets panelinden veya GUI'den çağrılan spawn fonksiyonu
 function spawnObject(type) {
-    const x = (Math.random() - 0.5) * 10;
-    const z = (Math.random() - 0.5) * 10;
-    // Benzersiz isim oluştur
+    const x = (Math.random() - 0.5) * 5;
+    const z = (Math.random() - 0.5) * 5;
     const name = type.charAt(0).toUpperCase() + type.slice(1) + " " + (objects.length + 1);
-    
     addObjectToScene(name, type, [x, 0, z]);
-    
-    // Yeni eklenen objeyi otomatik seç
+    selectLastObject();
+}
+
+function selectLastObject() {
     selectedObjectIndex = objects.length - 1;
     syncGUItoObject();
 }
 
 function deleteSelectedObject() {
-    if (objects.length === 0) return;
+    if (selectedObjectIndex === -1) return;
     objects.splice(selectedObjectIndex, 1);
-    
-    // Seçimi düzelt
-    if (selectedObjectIndex >= objects.length) selectedObjectIndex = objects.length - 1;
-    if (selectedObjectIndex < 0) selectedObjectIndex = 0;
-    
+    selectedObjectIndex = -1;
     updateGUIList();
     syncGUItoObject();
 }
 
 // --- GUI MANTIĞI ---
-
 let objListController;
 
 function initGUI() {
@@ -218,73 +284,68 @@ function initGUI() {
     mainFolder.add(guiState, 'enableDualView').name('Çift Kamera');
     mainFolder.addColor(guiState, 'bgColor').name('Arkaplan');
     
-    // Obje Listesi (Dropdown)
+    // Obje Listesi
     const objNames = {}; 
-    objects.forEach((o, i) => objNames[o.name] = i);
-    
     objListController = mainFolder.add(guiState, 'selectedName', objNames).name('SEÇİLİ OBJE')
         .onChange((val) => {
             selectedObjectIndex = parseInt(val);
-            syncGUItoObject(); // Seçim değişince sliderları güncelle
+            syncGUItoObject(); 
         });
 
+    mainFolder.add(guiState, 'deleteSelected').name('Seçiliyi SİL');
     mainFolder.open();
 
-    const transformFolder = gui.addFolder('Obje Ayarları (Transform)');
-    transformFolder.add(guiState, 'posX', -20, 20).name('Pozisyon X').onChange(updateObjectFromGUI);
-    transformFolder.add(guiState, 'posY', -10, 20).name('Pozisyon Y').onChange(updateObjectFromGUI);
-    transformFolder.add(guiState, 'posZ', -20, 20).name('Pozisyon Z').onChange(updateObjectFromGUI);
-    transformFolder.add(guiState, 'scale', 0.1, 5.0).name('Boyut').onChange(updateObjectFromGUI);
-    transformFolder.add(guiState, 'rotY', 0, 360).name('Dönüş Y').onChange(updateObjectFromGUI);
+    const transformFolder = gui.addFolder('Transform');
+    transformFolder.add(guiState, 'posX', -20, 20).onChange(updateObjectFromGUI);
+    transformFolder.add(guiState, 'posY', -10, 20).onChange(updateObjectFromGUI);
+    transformFolder.add(guiState, 'posZ', -20, 20).onChange(updateObjectFromGUI);
+    transformFolder.add(guiState, 'scale', 0.1, 5.0).onChange(updateObjectFromGUI);
+    transformFolder.add(guiState, 'rotY', 0, 360).onChange(updateObjectFromGUI);
     transformFolder.open();
 
     const lightFolder = gui.addFolder('Işık');
     lightFolder.add(guiState, 'lightX', -20, 20);
     lightFolder.add(guiState, 'lightY', -20, 20);
     lightFolder.add(guiState, 'lightZ', -20, 20);
-
-    // İlk başta seçimi senkronize et
-    syncGUItoObject();
 }
 
-// Obje listesi değişince Dropdown menüsünü güncelle
 function updateGUIList() {
     if (!objListController) return;
-    
-    // dat.GUI'nin select elementini manuel temizleyip yeniden dolduruyoruz
     const select = objListController.domElement.querySelector('select');
     select.innerHTML = '';
+    
+    // "Seçim Yok" seçeneği ekle
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = -1;
+    defaultOpt.text = objects.length === 0 ? "(Sahne Boş)" : "(Obje Seçin)";
+    select.add(defaultOpt);
+
     objects.forEach((o, i) => {
         const opt = document.createElement('option');
         opt.value = i;
         opt.text = o.name;
         select.add(opt);
     });
-    
-    // Geçerli değeri ayarla
     objListController.setValue(selectedObjectIndex);
 }
 
-// Seçili objenin değerlerini GUI'ye aktar (Okuma)
 function syncGUItoObject() {
-    if (objects.length === 0) return;
+    if (selectedObjectIndex === -1 || !objects[selectedObjectIndex]) {
+        guiState.selectedName = -1;
+        return;
+    }
     const obj = objects[selectedObjectIndex];
-    
     guiState.posX = obj.position[0];
     guiState.posY = obj.position[1];
     guiState.posZ = obj.position[2];
     guiState.scale = obj.scale[0]; 
     guiState.rotY = obj.rotation[1];
-
-    // dat.GUI'yi görsel olarak güncelle
     gui.updateDisplay();
 }
 
-// GUI'deki slider değişince objeyi güncelle (Yazma)
 function updateObjectFromGUI() {
-    if (objects.length === 0) return;
+    if (selectedObjectIndex === -1) return;
     const obj = objects[selectedObjectIndex];
-
     obj.position[0] = guiState.posX;
     obj.position[1] = guiState.posY;
     obj.position[2] = guiState.posZ;
@@ -292,39 +353,8 @@ function updateObjectFromGUI() {
     obj.rotation[1] = guiState.rotY;
 }
 
-// --- DOSYA VE PANEL YÖNETİMİ ---
-
-function setupAssetsPanel() {
-    document.getElementById('btnSpawnCube').addEventListener('click', () => spawnObject('cube'));
-    document.getElementById('btnSpawnSphere').addEventListener('click', () => spawnObject('sphere'));
-    document.getElementById('btnSpawnCylinder').addEventListener('click', () => spawnObject('cylinder'));
-
-    // Model Yükle
-    document.getElementById('btnImportModel').addEventListener('click', () => {
-        document.getElementById('objInput').click();
-    });
-
-    // Doku Yükle
-    document.getElementById('btnImportTexture').addEventListener('click', () => {
-        document.getElementById('textureInput').click();
-    });
-
-    // Sil
-    document.getElementById('btnRemoveSelected').addEventListener('click', () => {
-        deleteSelectedObject();
-    });
-
-    // Temizle
-    document.getElementById('btnClearScene').addEventListener('click', () => {
-        if(confirm("Tüm sahneyi temizlemek istediğinize emin misiniz?")) {
-            objects.length = 0;
-            updateGUIList();
-        }
-    });
-}
-
+// --- DOSYA YÜKLEME ---
 function setupFileInputs() {
-    // OBJ Yükleme
     document.getElementById('objInput').addEventListener('change', function(e) {
         const file = e.target.files[0];
         if (!file) return;
@@ -332,20 +362,15 @@ function setupFileInputs() {
         reader.onload = function(e) {
             const data = ObjLoader.parse(e.target.result);
             const mesh = ObjLoader.createMesh(gl, data);
-            
-            // Yeni bir obje olarak ekle
             const name = "Model " + (objects.length + 1);
             const newObj = addObjectToScene(name, 'custom', [0, 2, 0]);
             newObj.model = mesh;
-            
-            selectedObjectIndex = objects.length - 1;
-            syncGUItoObject();
+            selectLastObject();
         };
         reader.readAsText(file);
         this.value = '';
     });
 
-    // Texture Yükleme
     document.getElementById('textureInput').addEventListener('change', function(e) {
         const file = e.target.files[0];
         if (!file) return;
@@ -357,11 +382,7 @@ function setupFileInputs() {
                 gl.bindTexture(gl.TEXTURE_2D, newTex);
                 gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
                 gl.generateMipmap(gl.TEXTURE_2D);
-
-                // Sadece SEÇİLİ objenin dokusunu değiştir
-                if (objects[selectedObjectIndex]) {
-                    objects[selectedObjectIndex].texture = newTex;
-                }
+                if (selectedObjectIndex !== -1) objects[selectedObjectIndex].texture = newTex;
             };
             img.src = e.target.result;
         };
@@ -374,7 +395,8 @@ function setupFileInputs() {
 function loadTexture(gl, url) {
     const texture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, texture);
-    const pixel = new Uint8Array([100, 100, 100, 255]); // Varsayılan gri
+    // Yüklenene kadar geçici gri renk
+    const pixel = new Uint8Array([128, 128, 128, 255]); 
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
     const image = new Image();
     image.onload = function() {
@@ -382,6 +404,8 @@ function loadTexture(gl, url) {
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
         gl.generateMipmap(gl.TEXTURE_2D);
     };
+    // Dosya yoksa hata vermemesi için
+    image.onerror = function() { console.warn("Texture bulunamadı: " + url); };
     image.src = url;
     return texture;
 }
@@ -392,7 +416,6 @@ function render(now) {
     const deltaTime = now - then;
     then = now;
     
-    // Kamera Hareketi
     const speed = 5.0 * deltaTime; 
     if (keysPressed['KeyW']) camera.moveForward(speed);
     if (keysPressed['KeyS']) camera.moveForward(-speed);
@@ -410,8 +433,6 @@ function render(now) {
     if (guiState.enableDualView) {
         gl.enable(gl.SCISSOR_TEST);
         const halfWidth = width / 2;
-        
-        // Sol Ekran
         gl.viewport(0, 0, halfWidth, height);
         gl.scissor(0, 0, halfWidth, height);
         gl.clearColor(r, g, b, 1.0);
@@ -420,7 +441,6 @@ function render(now) {
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
         drawScene(now, camera, aspect => mat4.perspective(projectionMatrix, 45 * Math.PI / 180, aspect, 0.1, 100.0));
 
-        // Sağ Ekran
         gl.viewport(halfWidth, 0, halfWidth, height);
         gl.scissor(halfWidth, 0, halfWidth, height);
         gl.clearColor(0.1, 0.1, 0.2, 1.0); 
@@ -442,7 +462,6 @@ function render(now) {
 
 function drawScene(now, activeCamera, projectionUpdateFn) {
     gl.useProgram(programInfo.program);
-    
     const aspect = guiState.enableDualView ? (gl.canvas.width / 2) / gl.canvas.height : gl.canvas.width / gl.canvas.height;
     projectionUpdateFn(aspect);
 
@@ -452,11 +471,9 @@ function drawScene(now, activeCamera, projectionUpdateFn) {
     gl.uniform3f(programInfo.uniformLocations.lightPosition, guiState.lightX, guiState.lightY, guiState.lightZ);
     gl.uniform3fv(programInfo.uniformLocations.viewPosition, activeCamera.position); 
 
-    // --- TÜM OBJELERİ LİSTEDEN ÇİZ ---
     objects.forEach(obj => {
         if (!obj.model) return; 
 
-        // Texture Bağla
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, obj.texture);
         gl.uniform1i(programInfo.uniformLocations.uSampler, 0);
