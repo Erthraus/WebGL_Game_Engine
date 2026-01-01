@@ -3,15 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <title>BBM 414 WebGL2 Project</title>
+    <link rel="stylesheet" href="style.css">
     <style>
         body { margin: 0; overflow: hidden; }
         canvas { display: block; width: 100vw; height: 100vh; }
     </style>
 </head>
 <body>
+    <div id="info-panel">
+        <h1>WebGL2 Game Engine</h1>
+        <p><span class="key">W</span> <span class="key">A</span> <span class="key">S</span> <span class="key">D</span> : Hareket Et</p>
+        <p><span class="key">Fare</span> : Etrafa Bak</p>
+        <p><span class="key">Q</span> <span class="key">E</span> : Aşağı / Yukarı</p>
+        <p><span class="key">Tıkla</span> : Kitle / Başla</p>
+    </div>
+    
     <canvas id="glCanvas"></canvas>
     
     <script src="lib/gl-matrix-min.js"></script> 
-    <script src="lib/dat.gui.min.js"></script> <script src="src/main.js" type="module"></script>
+    <script src="lib/dat.gui.min.js"></script>
+    <script src="src/main.js" type="module"></script>
 </body>
 </html>
