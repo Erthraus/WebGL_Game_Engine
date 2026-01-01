@@ -41,60 +41,113 @@ const guiState = {
     scale: 1,
     rotX: 0, rotY: 0, rotZ: 0,
     
+    // Materyal & Efektler
+    shininess: 32.0,
+    opacity: 1.0,         // YENİ: Şeffaflık
+    autoRotate: false,    // YENİ: Otomatik Dönme
+    
+    // Sahne Efektleri
+    fogDensity: 0.02,     // YENİ: Sis Yoğunluğu
+    fogColor: [25, 25, 25], // YENİ: Sis Rengi (Arkaplanla uyumlu olmalı)
+    
     // Bilgi
-    currentTextureName: "Varsayılan", // YENİ: Panelde görünecek doku ismi
+    currentTextureName: "Varsayılan",
 
-    lightX: 5, lightY: 10, lightZ: 5,
+    lightX: 5, lightY: 5, lightZ: 5,
 
     deleteSelected: () => deleteSelectedObject(),
     importOBJ: () => document.getElementById('objInput').click(),
     importTexture: () => document.getElementById('textureInput').click(),
 };
 
+// --- SHADER (SİS VE ALPHA EKLENDİ) ---
 const vsSource = `#version 300 es
     in vec4 aVertexPosition;
     in vec3 aVertexNormal; 
     in vec2 aTextureCoord;
+    
     uniform mat4 uModelMatrix;
     uniform mat4 uViewMatrix;
     uniform mat4 uProjectionMatrix;
     uniform mat3 uNormalMatrix;
+    
     out vec2 vTextureCoord;
     out vec3 vNormal;
     out vec3 vFragPos;
+    out float vDist; // YENİ: Kameraya olan uzaklık (Sis için)
+    
     void main(void) {
         vec4 worldPosition = uModelMatrix * aVertexPosition;
+        vec4 viewPosition = uViewMatrix * worldPosition;
+        
         vFragPos = vec3(worldPosition);
         vNormal = uNormalMatrix * aVertexNormal;
-        gl_Position = uProjectionMatrix * uViewMatrix * worldPosition;
+        
+        // Uzaklık hesabı (View space'deki Z değeri derinliktir)
+        vDist = length(viewPosition.xyz);
+        
+        gl_Position = uProjectionMatrix * viewPosition;
         vTextureCoord = aTextureCoord;
     }
 `;
 
 const fsSource = `#version 300 es
     precision highp float;
+    
     in vec2 vTextureCoord;
     in vec3 vNormal;
     in vec3 vFragPos;
+    in float vDist; // Kameraya uzaklık
+    
     uniform sampler2D uSampler;
     uniform vec3 uLightPosition;
     uniform vec3 uViewPosition;
+    
+    uniform float uShininess;
+    uniform float uOpacity;       // YENİ: Şeffaflık
+    uniform bool uIsLightSource;
+    
+    // Sis Uniformları
+    uniform vec3 uFogColor;       // YENİ
+    uniform float uFogDensity;    // YENİ
+    
     out vec4 fragColor;
+    
     void main(void) {
+        if(uIsLightSource) {
+            fragColor = vec4(1.0, 1.0, 0.0, 1.0);
+            return;
+        }
+
         vec4 texColor = texture(uSampler, vTextureCoord);
-        float ambientStrength = 0.1;
+        
+        // 1. Phong Lighting
+        float ambientStrength = 0.2;
         vec3 ambient = ambientStrength * vec3(1.0, 1.0, 1.0);
+        
         vec3 norm = normalize(vNormal);
         vec3 lightDir = normalize(uLightPosition - vFragPos);
         float diff = max(dot(norm, lightDir), 0.0);
         vec3 diffuse = diff * vec3(1.0, 1.0, 1.0);
-        float specularStrength = 0.5;
+        
+        float specularStrength = 0.8;
         vec3 viewDir = normalize(uViewPosition - vFragPos);
         vec3 reflectDir = reflect(-lightDir, norm);
-        float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32.0);
+        float spec = pow(max(dot(viewDir, reflectDir), 0.0), uShininess);
         vec3 specular = specularStrength * spec * vec3(1.0, 1.0, 1.0);
-        vec3 result = (ambient + diffuse + specular) * vec3(texColor);
-        fragColor = vec4(result, texColor.a);
+        
+        vec3 finalColor = (ambient + diffuse + specular) * vec3(texColor);
+        
+        // 2. Sis Hesaplama (Exponential Fog)
+        // Formül: factor = 1 / e^(distance * density)^2
+        float fogFactor = 1.0 / exp(pow(vDist * uFogDensity, 2.0));
+        fogFactor = clamp(fogFactor, 0.0, 1.0);
+        
+        // Sis rengi ile final rengi karıştır
+        vec3 mixedColor = mix(uFogColor, finalColor, fogFactor);
+        
+        // 3. Alpha (Şeffaflık)
+        fragColor = vec4(mixedColor, uOpacity * texColor.a);
     }
 `;
 
@@ -134,6 +187,12 @@ function main() {
             uSampler: shader.getUniformLocation('uSampler'),
             lightPosition: shader.getUniformLocation('uLightPosition'),
             viewPosition: shader.getUniformLocation('uViewPosition'),
+            
+            uShininess: shader.getUniformLocation('uShininess'),
+            uOpacity: shader.getUniformLocation('uOpacity'),        // YENİ
+            uIsLightSource: shader.getUniformLocation('uIsLightSource'),
+            uFogColor: shader.getUniformLocation('uFogColor'),      // YENİ
+            uFogDensity: shader.getUniformLocation('uFogDensity')   // YENİ
         },
     };
 
@@ -144,8 +203,13 @@ function main() {
 
     defaultTexture = loadTexture(gl, 'assets/box.jpg');
 
-    camera = new Camera([0, 2, 10], [0, 1, 0], -90, 0);
+    // Başlangıç Kamerası
+    camera = new Camera([0, 3, 12], [0, 1, 0], -90, -10);
     topCamera = new Camera([0, 20, 0], [0, 1, 0], -90, -90);
+
+    // YENİ: Şeffaflık (Blending) Aktifleştirme
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
     initGUI(); 
     requestAnimationFrame(render);
@@ -194,7 +258,6 @@ function handleAssetClick(asset) {
     else if (asset.type === 'model') {
         ObjLoader.load(gl, 'assets/' + asset.file)
             .then(mesh => {
-                // Asset ismini kullanarak obje oluştur
                 const newObj = addObjectToScene(asset.name, 'custom', [0, 2, 0]);
                 newObj.model = mesh;
                 newObj.scale = [0.5, 0.5, 0.5];
@@ -209,18 +272,15 @@ function handleAssetClick(asset) {
         }
         const texture = loadTexture(gl, 'assets/' + asset.file);
         objects[selectedObjectIndex].texture = texture;
-        objects[selectedObjectIndex].textureName = asset.name; // İsmi kaydet
+        objects[selectedObjectIndex].textureName = asset.name; 
         syncGUItoObject();
     }
 }
 
 // --- NESNE YÖNETİMİ ---
-
 function addObjectToScene(name, type, position) {
-    // İsim çakışmasını önlemek için numara ekle (Örn: Küp 1, Küp 2)
     let finalName = name;
     let counter = 1;
-    // Basit bir benzersiz isim kontrolü
     while(objects.some(o => o.name === finalName)) {
         finalName = `${name} (${counter++})`;
     }
@@ -232,7 +292,13 @@ function addObjectToScene(name, type, position) {
         rotation: [0, 0, 0], 
         scale: [1, 1, 1],
         texture: defaultTexture,
-        textureName: "Varsayılan", // YENİ: Doku ismi takibi
+        textureName: "Varsayılan", 
+        
+        // Yeni Özellikler
+        shininess: 32.0,
+        opacity: 1.0,
+        autoRotate: false,
+        
         model: geometryTemplates[type] || null 
     };
     objects.push(obj);
@@ -243,7 +309,6 @@ function addObjectToScene(name, type, position) {
 function spawnObject(type, baseName) {
     const x = (Math.random() - 0.5) * 5;
     const z = (Math.random() - 0.5) * 5;
-    // Eğer baseName gelmezse tipi kullan
     const name = baseName || (type.charAt(0).toUpperCase() + type.slice(1));
     addObjectToScene(name, type, [x, 0, z]);
     selectLastObject();
@@ -268,9 +333,13 @@ let objListController;
 function initGUI() {
     gui = new dat.GUI({ width: 300 });
 
-    const mainFolder = gui.addFolder('Genel & Seçim');
+    const mainFolder = gui.addFolder('Sahne & Kamera');
     mainFolder.add(guiState, 'enableDualView').name('Çift Kamera');
     mainFolder.addColor(guiState, 'bgColor').name('Arkaplan');
+    
+    // YENİ: Sis Kontrolleri
+    mainFolder.addColor(guiState, 'fogColor').name('Sis Rengi');
+    mainFolder.add(guiState, 'fogDensity', 0.0, 0.2).name('Sis Yoğunluğu');
     
     // Obje Listesi
     const objNames = {}; 
@@ -289,7 +358,12 @@ function initGUI() {
     transformFolder.add(guiState, 'posZ', -20, 20).onChange(updateObjectFromGUI);
     transformFolder.add(guiState, 'scale', 0.1, 5.0).onChange(updateObjectFromGUI);
     transformFolder.add(guiState, 'rotY', 0, 360).onChange(updateObjectFromGUI);
-    // YENİ: Sadece bilgi amaçlı doku ismi alanı (listen() ile anlık güncellenir)
+    
+    // Materyal
+    transformFolder.add(guiState, 'shininess', 1, 256).name('Parlaklık').onChange(updateObjectFromGUI);
+    transformFolder.add(guiState, 'opacity', 0.1, 1.0).name('Şeffaflık (Opacity)').onChange(updateObjectFromGUI);
+    transformFolder.add(guiState, 'autoRotate').name('Otomatik Dön').onChange(updateObjectFromGUI);
+    
     transformFolder.add(guiState, 'currentTextureName').name('Aktif Doku').listen(); 
     transformFolder.open();
 
@@ -312,7 +386,7 @@ function updateGUIList() {
     objects.forEach((o, i) => {
         const opt = document.createElement('option');
         opt.value = i;
-        opt.text = o.name; // Artık temiz isimler görünecek
+        opt.text = o.name; 
         select.add(opt);
     });
     objListController.setValue(selectedObjectIndex);
@@ -330,7 +404,12 @@ function syncGUItoObject() {
     guiState.posZ = obj.position[2];
     guiState.scale = obj.scale[0]; 
     guiState.rotY = obj.rotation[1];
-    guiState.currentTextureName = obj.textureName || "Varsayılan"; // Dokuyu göster
+    
+    guiState.shininess = obj.shininess || 32.0;
+    guiState.opacity = obj.opacity !== undefined ? obj.opacity : 1.0;
+    guiState.autoRotate = !!obj.autoRotate;
+
+    guiState.currentTextureName = obj.textureName || "Varsayılan";
     
     gui.updateDisplay();
 }
@@ -343,35 +422,28 @@ function updateObjectFromGUI() {
     obj.position[2] = guiState.posZ;
     obj.scale = [guiState.scale, guiState.scale, guiState.scale];
     obj.rotation[1] = guiState.rotY;
+    
+    obj.shininess = guiState.shininess;
+    obj.opacity = guiState.opacity;
+    obj.autoRotate = guiState.autoRotate;
 }
 
-// --- DOSYA YÜKLEME (YENİ: Dosya İsimlerini İşleme) ---
-
-// Dosya ismini temizleyen yardımcı fonksiyon
+// --- DOSYA YÜKLEME ---
 function formatFileName(fileName) {
-    // Uzantıyı kaldır (örn: "araba_modeli.obj" -> "araba_modeli")
     let name = fileName.replace(/\.[^/.]+$/, "");
-    // Alt çizgileri boşluk yap
     name = name.replace(/_/g, " ");
-    // İlk harfleri büyüt
     return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
 function setupFileInputs() {
-    // OBJ Yükleme
     document.getElementById('objInput').addEventListener('change', function(e) {
         const file = e.target.files[0];
         if (!file) return;
-
-        // Dosya ismini al ve temizle
         const cleanName = formatFileName(file.name);
-
         const reader = new FileReader();
         reader.onload = function(e) {
             const data = ObjLoader.parse(e.target.result);
             const mesh = ObjLoader.createMesh(gl, data);
-            
-            // Temizlenmiş ismi kullan
             const newObj = addObjectToScene(cleanName, 'custom', [0, 2, 0]);
             newObj.model = mesh;
             selectLastObject();
@@ -380,13 +452,10 @@ function setupFileInputs() {
         this.value = '';
     });
 
-    // Texture Yükleme
     document.getElementById('textureInput').addEventListener('change', function(e) {
         const file = e.target.files[0];
         if (!file) return;
-
-        const cleanName = formatFileName(file.name); // Texture ismini al
-
+        const cleanName = formatFileName(file.name);
         const reader = new FileReader();
         reader.onload = function(e) {
             const img = new Image();
@@ -395,11 +464,10 @@ function setupFileInputs() {
                 gl.bindTexture(gl.TEXTURE_2D, newTex);
                 gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
                 gl.generateMipmap(gl.TEXTURE_2D);
-                
                 if (selectedObjectIndex !== -1) {
                     objects[selectedObjectIndex].texture = newTex;
-                    objects[selectedObjectIndex].textureName = cleanName; // İsmi kaydet
-                    syncGUItoObject(); // GUI'yi güncelle
+                    objects[selectedObjectIndex].textureName = cleanName; 
+                    syncGUItoObject(); 
                 }
             };
             img.src = e.target.result;
@@ -431,6 +499,7 @@ function render(now) {
     const deltaTime = now - then;
     then = now;
     
+    // Kamera
     const speed = 5.0 * deltaTime; 
     if (keysPressed['KeyW']) camera.moveForward(speed);
     if (keysPressed['KeyS']) camera.moveForward(-speed);
@@ -441,13 +510,20 @@ function render(now) {
 
     const width = gl.canvas.width;
     const height = gl.canvas.height;
+    
+    // Arkaplan Rengini GUI'den al
     const r = guiState.bgColor[0] / 255;
     const g = guiState.bgColor[1] / 255;
     const b = guiState.bgColor[2] / 255;
 
+    // Şeffaflık için derinlik sıralaması gerekir ama basit blend için depth mask kapatıp açılabilir
+    // Burada basit blend kullanıyoruz (Order independent transparency olmadan)
+
     if (guiState.enableDualView) {
         gl.enable(gl.SCISSOR_TEST);
         const halfWidth = width / 2;
+        
+        // Sol
         gl.viewport(0, 0, halfWidth, height);
         gl.scissor(0, 0, halfWidth, height);
         gl.clearColor(r, g, b, 1.0);
@@ -456,6 +532,7 @@ function render(now) {
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
         drawScene(now, camera, aspect => mat4.perspective(projectionMatrix, 45 * Math.PI / 180, aspect, 0.1, 100.0));
 
+        // Sağ
         gl.viewport(halfWidth, 0, halfWidth, height);
         gl.scissor(halfWidth, 0, halfWidth, height);
         gl.clearColor(0.1, 0.1, 0.2, 1.0); 
@@ -484,7 +561,27 @@ function drawScene(now, activeCamera, projectionUpdateFn) {
     gl.uniformMatrix4fv(programInfo.uniformLocations.projectionMatrix, false, projectionMatrix);
     gl.uniformMatrix4fv(programInfo.uniformLocations.viewMatrix, false, viewMatrix);
     gl.uniform3f(programInfo.uniformLocations.lightPosition, guiState.lightX, guiState.lightY, guiState.lightZ);
-    gl.uniform3fv(programInfo.uniformLocations.viewPosition, activeCamera.position); 
+    gl.uniform3fv(programInfo.uniformLocations.viewPosition, activeCamera.position);
+    
+    // YENİ: Sis Uniformları
+    const fogR = guiState.fogColor[0] / 255;
+    const fogG = guiState.fogColor[1] / 255;
+    const fogB = guiState.fogColor[2] / 255;
+    gl.uniform3f(programInfo.uniformLocations.uFogColor, fogR, fogG, fogB);
+    gl.uniform1f(programInfo.uniformLocations.uFogDensity, guiState.fogDensity);
+
+    // 1. IŞIK KAYNAĞI GÖRSELİ
+    gl.uniform1i(programInfo.uniformLocations.uIsLightSource, 1);
+    let lightModel = mat4.create();
+    mat4.translate(lightModel, lightModel, [guiState.lightX, guiState.lightY, guiState.lightZ]);
+    mat4.scale(lightModel, lightModel, [0.2, 0.2, 0.2]);
+    gl.uniformMatrix4fv(programInfo.uniformLocations.modelMatrix, false, lightModel);
+    let lightNormal = mat3.create(); 
+    gl.uniformMatrix3fv(programInfo.uniformLocations.normalMatrix, false, lightNormal);
+    geometryTemplates['cube'].draw(programInfo);
+
+    // 2. DİĞER OBJELER
+    gl.uniform1i(programInfo.uniformLocations.uIsLightSource, 0);
 
     objects.forEach(obj => {
         if (!obj.model) return; 
@@ -493,8 +590,23 @@ function drawScene(now, activeCamera, projectionUpdateFn) {
         gl.bindTexture(gl.TEXTURE_2D, obj.texture);
         gl.uniform1i(programInfo.uniformLocations.uSampler, 0);
 
+        gl.uniform1f(programInfo.uniformLocations.uShininess, obj.shininess || 32.0);
+        gl.uniform1f(programInfo.uniformLocations.uOpacity, obj.opacity !== undefined ? obj.opacity : 1.0);
+
         let modelMatrix = mat4.create();
         mat4.translate(modelMatrix, modelMatrix, obj.position);
+        
+        // YENİ: Auto Rotate Logic
+        if(obj.autoRotate) {
+             obj.rotation[1] += 1.0; // Her karede 1 derece döndür
+             if(obj.rotation[1] > 360) obj.rotation[1] -= 360;
+             // Eğer bu obje seçiliyse GUI'yi de güncelle (seçili değilse gerek yok)
+             if(objects[selectedObjectIndex] === obj) {
+                 guiState.rotY = obj.rotation[1];
+                 // gui.updateDisplay() ağır gelebilir, her karede yapmamak daha iyi ama burada sorun olmaz.
+             }
+        }
+        
         mat4.rotate(modelMatrix, modelMatrix, obj.rotation[1] * Math.PI / 180, [0, 1, 0]);
         mat4.scale(modelMatrix, modelMatrix, obj.scale);
 
