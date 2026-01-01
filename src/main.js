@@ -31,8 +31,8 @@ let projectionMatrix = mat4.create();
 const objects = []; 
 let selectedObjectIndex = -1; 
 
-// YENİ: IŞIK SİSTEMİ (3 Adet Işık)
-// DÜZELTME: 'active' -> 'isActive' olarak değiştirildi
+// --- IŞIK SİSTEMİ DEĞİŞKENLERİ ---
+const SHADER_MAX_LIGHTS = 8; // Shader'daki limit ile aynı olmalı
 const lights = [
     { name: "Ana Işık (Güneş)", type: 1, pos: [5, 10, 5], color: [255, 255, 255], intensity: 1.0, isActive: true },
     { name: "Sol Lamba (Kırmızı)", type: 0, pos: [-5, 2, 0], color: [255, 50, 50], intensity: 2.0, isActive: true },
@@ -41,12 +41,13 @@ const lights = [
 let selectedLightIndex = 0;
 
 let gui;
+// GUI State nesnesine yeni fonksiyonlar ekliyoruz
 const guiState = {
     enableDualView: false,
     bgColor: [25, 25, 25],
-    selectedName: "Yok",
+    selectedName: -1,
     
-    // Transform (X, Y, Z Rotasyonları eklendi)
+    // Transform
     posX: 0, posY: 0, posZ: 0,
     scale: 1,
     rotX: 0, rotY: 0, rotZ: 0,
@@ -60,13 +61,17 @@ const guiState = {
     fogDensity: 0.02,     
     fogColor: [25, 25, 25], 
     
-    // Işık Yönetimi (Seçili ışığın ayarları)
-    selLightName: "Ana Işık",
+    // Işık Yönetimi
+    selLightName: 0, // Başlangıç indexi
     lType: 1,
     lPosX: 5, lPosY: 10, lPosZ: 5,
     lColor: [255, 255, 255],
     lIntensity: 1.0,
-    lActive: true, // GUI değişkeni ismi kalabilir, ama arkada isActive'i kontrol edecek
+    lActive: true,
+    
+    // YENİ: Işık Ekle/Sil Aksiyonları
+    addLight: () => addNewLight(),
+    delLight: () => deleteSelectedLight(),
     
     // Bilgi
     currentTextureName: "Varsayılan",
@@ -76,7 +81,7 @@ const guiState = {
     importTexture: () => document.getElementById('textureInput').click(),
 };
 
-// --- SHADER GÜNCELLEMESİ (ÇOKLU IŞIK DÖNGÜSÜ) ---
+// --- SHADER GÜNCELLEMESİ (MAX LIGHTS ARTIRILDI & COUNT EKLENDİ) ---
 const vsSource = `#version 300 es
     in vec4 aVertexPosition;
     in vec3 aVertexNormal; 
@@ -118,20 +123,21 @@ const fsSource = `#version 300 es
     
     uniform float uShininess;
     uniform float uOpacity;       
-    uniform bool uIsLightSource; // Işık kaynağını çiziyorsak düz renk
-    uniform vec3 uSourceColor;   // Işık kaynağının kendi rengi
+    uniform bool uIsLightSource; 
+    uniform vec3 uSourceColor;   
     
-    // --- ÇOKLU IŞIK YAPISI ---
     struct Light {
         vec3 position;
         int type;       // 0: Point, 1: Directional
         vec3 color;
         float intensity;
-        bool isActive;  // DÜZELTME: 'active' kelimesi 'isActive' yapıldı
+        bool isActive;
     };
     
-    #define MAX_LIGHTS 3
+    // YENİ: Limit artırıldı ve güncel sayı için uniform eklendi
+    #define MAX_LIGHTS 8
     uniform Light uLights[MAX_LIGHTS];
+    uniform int uLightCount; // O anki aktif ışık sayısı
     
     // Sis
     uniform vec3 uFogColor;       
@@ -140,7 +146,7 @@ const fsSource = `#version 300 es
     out vec4 fragColor;
     
     vec3 calcLight(Light light, vec3 normal, vec3 viewDir, vec3 albedo) {
-        if(!light.isActive) return vec3(0.0); // DÜZELTME
+        if(!light.isActive) return vec3(0.0);
 
         vec3 lightDir;
         float attenuation = 1.0;
@@ -151,7 +157,7 @@ const fsSource = `#version 300 es
             vec3 lightVec = light.position - vFragPos;
             float distance = length(lightVec);
             lightDir = normalize(lightVec);
-            attenuation = 1.0 / (1.0 + 0.05 * distance * distance); // Inverse square law approximation
+            attenuation = 1.0 / (1.0 + 0.05 * distance * distance); 
         }
 
         // Diffuse
@@ -176,12 +182,12 @@ const fsSource = `#version 300 es
         vec3 norm = normalize(vNormal);
         vec3 viewDir = normalize(uViewPosition - vFragPos);
         
-        // Ambient (Ortam Işığı - Sabit)
         vec3 ambient = 0.1 * vec3(1.0, 1.0, 1.0);
         
-        // Tüm ışıkları topla
+        // YENİ: Döngü uLightCount kadar dönecek
         vec3 totalLighting = vec3(0.0);
         for(int i = 0; i < MAX_LIGHTS; i++) {
+            if(i >= uLightCount) break; // Sayıyı aştıysak çık
             totalLighting += calcLight(uLights[i], norm, viewDir, texColor.rgb);
         }
         
@@ -218,7 +224,6 @@ function main() {
 
     const shader = new ShaderProgram(gl, vsSource, fsSource);
     
-    // Uniform Locations
     programInfo = {
         program: shader.program,
         attribLocations: {
@@ -239,7 +244,9 @@ function main() {
             uIsLightSource: shader.getUniformLocation('uIsLightSource'),
             uSourceColor: shader.getUniformLocation('uSourceColor'),
             uFogColor: shader.getUniformLocation('uFogColor'),      
-            uFogDensity: shader.getUniformLocation('uFogDensity')   
+            uFogDensity: shader.getUniformLocation('uFogDensity'),
+            // YENİ: Işık sayısı uniformu
+            uLightCount: shader.getUniformLocation('uLightCount')
         },
     };
 
@@ -335,7 +342,7 @@ function addObjectToScene(name, type, position) {
         name: finalName,
         type: type, 
         position: position || [0, 0, 0],
-        rotation: [0, 0, 0], // X, Y, Z Rotasyonları
+        rotation: [0, 0, 0],
         scale: [1, 1, 1],
         texture: defaultTexture,
         textureName: "Varsayılan", 
@@ -370,9 +377,50 @@ function deleteSelectedObject() {
     syncGUItoObject();
 }
 
+// --- YENİ: IŞIK EKLEME/SİLME FONKSİYONLARI ---
+function addNewLight() {
+    if (lights.length >= SHADER_MAX_LIGHTS) {
+        alert(`Maksimum ışık sayısına (${SHADER_MAX_LIGHTS}) ulaşıldı!`);
+        return;
+    }
+    
+    const newId = lights.length + 1;
+    lights.push({
+        name: `Yeni Işık ${newId}`,
+        type: 0, // Point
+        pos: [0, 5, 0],
+        color: [255, 255, 255],
+        intensity: 1.0,
+        isActive: true
+    });
+    
+    // Yeni ekleneni seç
+    selectedLightIndex = lights.length - 1;
+    updateGUILightList();
+    syncGUItoLight();
+}
+
+function deleteSelectedLight() {
+    if (lights.length <= 1) {
+        alert("En az bir ışık kalmalı!");
+        return;
+    }
+    
+    lights.splice(selectedLightIndex, 1);
+    
+    // Indexi ayarla
+    if (selectedLightIndex >= lights.length) {
+        selectedLightIndex = lights.length - 1;
+    }
+    
+    updateGUILightList();
+    syncGUItoLight();
+}
+
+
 // --- GUI MANTIĞI ---
 let objListController;
-let lightListController;
+let lightListController; // Işık listesi kontrolcüsünü global yapıyoruz
 
 function initGUI() {
     gui = new dat.GUI({ width: 320 });
@@ -393,32 +441,30 @@ function initGUI() {
     mainFolder.add(guiState, 'deleteSelected').name('Seçiliyi SİL');
     mainFolder.open();
 
-    // TRANSFORM (GENİŞLETİLMİŞ LİMİTLER)
+    // TRANSFORM
     const transformFolder = gui.addFolder('Transform & Materyal');
-    // Limitleri -50 ile 50 arasına çıkardık
     transformFolder.add(guiState, 'posX', -50, 50).name('Pos X').onChange(updateObjectFromGUI);
     transformFolder.add(guiState, 'posY', -50, 50).name('Pos Y').onChange(updateObjectFromGUI);
     transformFolder.add(guiState, 'posZ', -50, 50).name('Pos Z').onChange(updateObjectFromGUI);
-    
     transformFolder.add(guiState, 'scale', 0.1, 10.0).name('Boyut').onChange(updateObjectFromGUI);
-    
-    // 3 Eksenli Rotasyon
     transformFolder.add(guiState, 'rotX', 0, 360).name('Rot X').onChange(updateObjectFromGUI);
     transformFolder.add(guiState, 'rotY', 0, 360).name('Rot Y').onChange(updateObjectFromGUI);
     transformFolder.add(guiState, 'rotZ', 0, 360).name('Rot Z').onChange(updateObjectFromGUI);
-    
     transformFolder.add(guiState, 'shininess', 1, 256).name('Parlaklık').onChange(updateObjectFromGUI);
     transformFolder.add(guiState, 'opacity', 0.0, 1.0).name('Şeffaflık').onChange(updateObjectFromGUI);
     transformFolder.add(guiState, 'autoRotate').name('Otomatik Dön').onChange(updateObjectFromGUI);
     transformFolder.add(guiState, 'currentTextureName').name('Aktif Doku').listen(); 
     transformFolder.open();
 
-    // IŞIK YÖNETİMİ
-    const lightFolder = gui.addFolder('Işık Yönetimi (Çoklu)');
+    // YENİ: IŞIK YÖNETİMİ GUI GÜNCELLEMESİ
+    const lightFolder = gui.addFolder('Işık Yönetimi (Dinamik)');
     
-    // Işık Seçim Dropdown
-    const lightNames = { "Ana Işık": 0, "Sol Lamba": 1, "Sağ Lamba": 2 };
-    lightListController = lightFolder.add(guiState, 'selLightName', lightNames).name('SEÇİLİ IŞIK')
+    // Işık Ekleme/Silme Butonları
+    lightFolder.add(guiState, 'addLight').name('✨ Yeni Işık Ekle');
+    lightFolder.add(guiState, 'delLight').name('❌ Seçili Işığı Sil');
+    
+    // Işık Seçim Dropdown (Başlangıçta boş, updateGUILightList dolduracak)
+    lightListController = lightFolder.add(guiState, 'selLightName', {}).name('SEÇİLİ IŞIK')
         .onChange((val) => {
             selectedLightIndex = parseInt(val);
             syncGUItoLight();
@@ -428,14 +474,32 @@ function initGUI() {
     lightFolder.add(guiState, 'lType', { "Noktasal (Point)": 0, "Yönlü (Dir)": 1 }).name('Tipi').onChange(updateLightFromGUI);
     lightFolder.addColor(guiState, 'lColor').name('Rengi').onChange(updateLightFromGUI);
     lightFolder.add(guiState, 'lIntensity', 0.0, 5.0).name('Şiddeti').onChange(updateLightFromGUI);
-    
     lightFolder.add(guiState, 'lPosX', -50, 50).name('Pos X').onChange(updateLightFromGUI);
     lightFolder.add(guiState, 'lPosY', -50, 50).name('Pos Y').onChange(updateLightFromGUI);
     lightFolder.add(guiState, 'lPosZ', -50, 50).name('Pos Z').onChange(updateLightFromGUI);
     lightFolder.open();
 
     // Başlangıç senkronizasyonu
+    updateGUILightList();
     syncGUItoLight();
+}
+
+// YENİ: Işık Listesini GUI'de Güncelleme Fonksiyonu
+function updateGUILightList() {
+    if (!lightListController) return;
+    const select = lightListController.domElement.querySelector('select');
+    select.innerHTML = '';
+    
+    lights.forEach((l, i) => {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.text = l.name; 
+        select.add(opt);
+    });
+    
+    // Seçili indexi güncelle ve GUI'ye yansıt
+    lightListController.setValue(selectedLightIndex);
+    guiState.selLightName = selectedLightIndex;
 }
 
 function updateGUIList() {
@@ -468,15 +532,12 @@ function syncGUItoObject() {
     guiState.posY = obj.position[1];
     guiState.posZ = obj.position[2];
     guiState.scale = obj.scale[0]; 
-    
     guiState.rotX = obj.rotation[0];
     guiState.rotY = obj.rotation[1];
     guiState.rotZ = obj.rotation[2];
-    
     guiState.shininess = obj.shininess || 32.0;
     guiState.opacity = obj.opacity !== undefined ? obj.opacity : 1.0;
     guiState.autoRotate = !!obj.autoRotate;
-
     guiState.currentTextureName = obj.textureName || "Varsayılan";
     gui.updateDisplay();
 }
@@ -488,22 +549,20 @@ function updateObjectFromGUI() {
     obj.position[1] = guiState.posY;
     obj.position[2] = guiState.posZ;
     obj.scale = [guiState.scale, guiState.scale, guiState.scale];
-    
     obj.rotation[0] = guiState.rotX;
     obj.rotation[1] = guiState.rotY;
     obj.rotation[2] = guiState.rotZ;
-    
     obj.shininess = guiState.shininess;
     obj.opacity = guiState.opacity;
     obj.autoRotate = guiState.autoRotate;
 }
 
-// Işık GUI Senkronizasyonu
 function syncGUItoLight() {
+    if (selectedLightIndex === -1 || !lights[selectedLightIndex]) return;
     const l = lights[selectedLightIndex];
-    guiState.lActive = l.isActive; // DÜZELTME
+    guiState.lActive = l.isActive;
     guiState.lType = l.type;
-    guiState.lColor = l.color; // [r, g, b]
+    guiState.lColor = l.color;
     guiState.lIntensity = l.intensity;
     guiState.lPosX = l.pos[0];
     guiState.lPosY = l.pos[1];
@@ -512,8 +571,9 @@ function syncGUItoLight() {
 }
 
 function updateLightFromGUI() {
+    if (selectedLightIndex === -1 || !lights[selectedLightIndex]) return;
     const l = lights[selectedLightIndex];
-    l.isActive = guiState.lActive; // DÜZELTME
+    l.isActive = guiState.lActive;
     l.type = parseInt(guiState.lType);
     l.color = guiState.lColor;
     l.intensity = guiState.lIntensity;
@@ -652,26 +712,25 @@ function drawScene(now, activeCamera, projectionUpdateFn) {
     gl.uniform3f(programInfo.uniformLocations.uFogColor, fogR, fogG, fogB);
     gl.uniform1f(programInfo.uniformLocations.uFogDensity, guiState.fogDensity);
 
-    // --- IŞIKLARI SHADER'A GÖNDER ---
-    for(let i=0; i<3; i++) {
+    // YENİ: Aktif ışık sayısını shader'a gönder
+    const activeLightCount = Math.min(lights.length, SHADER_MAX_LIGHTS);
+    gl.uniform1i(programInfo.uniformLocations.uLightCount, activeLightCount);
+
+    // --- IŞIKLARI SHADER'A GÖNDER (Döngü artık dinamik) ---
+    for(let i=0; i < activeLightCount; i++) {
         const l = lights[i];
-        // Uniform isimlerini string olarak oluşturmak biraz maliyetlidir ama bu ölçekte sorun olmaz
-        // uLights[0].position, uLights[1].position vb.
         const base = `uLights[${i}]`;
         
-        // Bu değerlerin locationlarını main içinde cache'lemek daha iyidir ama kod sadeliği için burada yapıyoruz
+        // Not: Performans için bu getUniformLocation çağrıları normalde init aşamasında cache'lenmelidir.
         gl.uniform3f(gl.getUniformLocation(programInfo.program, `${base}.position`), l.pos[0], l.pos[1], l.pos[2]);
         gl.uniform1i(gl.getUniformLocation(programInfo.program, `${base}.type`), l.type);
         gl.uniform3f(gl.getUniformLocation(programInfo.program, `${base}.color`), l.color[0]/255, l.color[1]/255, l.color[2]/255);
         gl.uniform1f(gl.getUniformLocation(programInfo.program, `${base}.intensity`), l.intensity);
-        
-        // DÜZELTME: .active -> .isActive
         gl.uniform1i(gl.getUniformLocation(programInfo.program, `${base}.isActive`), l.isActive ? 1 : 0);
         
         // IŞIK GÖRSELİ (KÜP) ÇİZİMİ
-        if(l.isActive) { // DÜZELTME: l.active -> l.isActive
+        if(l.isActive) { 
             gl.uniform1i(programInfo.uniformLocations.uIsLightSource, 1);
-            // Işığın kendi rengini gönder
             gl.uniform3f(programInfo.uniformLocations.uSourceColor, l.color[0]/255, l.color[1]/255, l.color[2]/255);
             
             let lightModel = mat4.create();
@@ -706,11 +765,9 @@ function drawScene(now, activeCamera, projectionUpdateFn) {
              if(objects[selectedObjectIndex] === obj) guiState.rotY = obj.rotation[1];
         }
         
-        // 3 Eksenli Rotasyon Uygulaması (Order: Y -> X -> Z)
         mat4.rotate(modelMatrix, modelMatrix, obj.rotation[1] * Math.PI / 180, [0, 1, 0]); // Y (Yaw)
         mat4.rotate(modelMatrix, modelMatrix, obj.rotation[0] * Math.PI / 180, [1, 0, 0]); // X (Pitch)
         mat4.rotate(modelMatrix, modelMatrix, obj.rotation[2] * Math.PI / 180, [0, 0, 1]); // Z (Roll)
-        
         mat4.scale(modelMatrix, modelMatrix, obj.scale);
 
         let normalMatrix = mat3.create();
