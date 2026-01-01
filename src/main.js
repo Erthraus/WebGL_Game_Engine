@@ -7,21 +7,13 @@ import { ObjLoader } from './core/ObjLoader.js';
 
 const { mat4, mat3 } = glMatrix; 
 
-// --- 1. PROJE DOSYALARI LİSTESİ (Manuel Tanımlama) ---
-// Tarayıcı klasörü okuyamadığı için assets klasöründeki dosyaları buraya yazmalısınız.
+// --- 1. PROJE DOSYALARI LİSTESİ ---
 const projectAssets = [
-    // Hazır Şekiller (Procedural)
     { name: "Küp", type: "primitive", id: "cube", icon: "🧊" },
     { name: "Küre", type: "primitive", id: "sphere", icon: "⚪" },
     { name: "Silindir", type: "primitive", id: "cylinder", icon: "🛢️" },
-    
-    // Klasördeki OBJ Modelleri
     { name: "Araba", type: "model", file: "car.obj", icon: "🚗" },
-    { name: "Çaydanlık", type: "model", file: "teapot.obj", icon: "🫖" }, 
-    
-    // Klasördeki Dokular (Textures)
     { name: "Kutu Doku", type: "texture", file: "box.jpg", icon: "📦" },
-    // { name: "Duvar", type: "texture", file: "wall.jpg", icon: "🧱" }, // Örnek
 ];
 
 // --- Global Değişkenler ---
@@ -36,7 +28,7 @@ const keysPressed = {};
 let projectionMatrix = mat4.create();
 
 const objects = []; 
-let selectedObjectIndex = -1; // Hiçbir şey seçili değil
+let selectedObjectIndex = -1; 
 
 let gui;
 const guiState = {
@@ -44,10 +36,14 @@ const guiState = {
     bgColor: [25, 25, 25],
     selectedName: "Yok",
     
+    // Transform
     posX: 0, posY: 0, posZ: 0,
     scale: 1,
     rotX: 0, rotY: 0, rotZ: 0,
     
+    // Bilgi
+    currentTextureName: "Varsayılan", // YENİ: Panelde görünecek doku ismi
+
     lightX: 5, lightY: 10, lightZ: 5,
 
     deleteSelected: () => deleteSelectedObject(),
@@ -120,8 +116,6 @@ function main() {
     });
 
     setupFileInputs();
-    
-    // YENİ: Asset panelini oluştur
     generateAssetsPanel();
 
     const shader = new ShaderProgram(gl, vsSource, fsSource);
@@ -143,32 +137,25 @@ function main() {
         },
     };
 
-    // Geometri Şablonları
     geometryTemplates['cube'] = new Cube(gl);
     geometryTemplates['sphere'] = new Sphere(gl, 0.8, 30, 30);
     geometryTemplates['cylinder'] = new Cylinder(gl, 0.6, 1.5, 30);
     geometryTemplates['prism'] = new Cylinder(gl, 0.7, 2.0, 6);
 
-    // Varsayılan texture (Box.jpg yoksa gri renk)
     defaultTexture = loadTexture(gl, 'assets/box.jpg');
-
-    // --- SAHNE ARTIK BOŞ BAŞLIYOR ---
-    // addObjectToScene(...) satırları silindi.
 
     camera = new Camera([0, 2, 10], [0, 1, 0], -90, 0);
     topCamera = new Camera([0, 20, 0], [0, 1, 0], -90, -90);
 
     initGUI(); 
-
     requestAnimationFrame(render);
 }
 
-// --- ASSETS PANEL OLUŞTURUCU (YENİ) ---
+// --- ASSETS PANEL ---
 function generateAssetsPanel() {
     const container = document.getElementById('assetsContainer');
-    container.innerHTML = ''; // Temizle
+    container.innerHTML = ''; 
 
-    // 1. Listeden kartları oluştur
     projectAssets.forEach(asset => {
         const card = document.createElement('div');
         card.className = 'asset-card';
@@ -176,19 +163,14 @@ function generateAssetsPanel() {
             <div class="asset-icon">${asset.icon}</div>
             <div class="asset-label">${asset.name}</div>
         `;
-        
-        // Tıklama Olayları
         card.onclick = () => handleAssetClick(asset);
-        
         container.appendChild(card);
     });
 
-    // 2. Ayırıcı
     const divider = document.createElement('div');
     divider.style = "width:1px; height:50px; background:#444; margin:0 5px;";
     container.appendChild(divider);
 
-    // 3. Sabit Import Araçları (Ekstra)
     const importTools = [
         { name: "Import OBJ", icon: "📂", action: () => document.getElementById('objInput').click() },
         { name: "Import IMG", icon: "🎨", action: () => document.getElementById('textureInput').click() },
@@ -205,47 +187,52 @@ function generateAssetsPanel() {
     });
 }
 
-// Asset'e tıklanınca ne olacağını belirle
 function handleAssetClick(asset) {
     if (asset.type === 'primitive') {
-        // Küp, Küre vb. ekle
-        spawnObject(asset.id);
+        spawnObject(asset.id, asset.name);
     } 
     else if (asset.type === 'model') {
-        // OBJ dosyasını assets klasöründen yükle
-        // Not: Dosyanın gerçekten orada olması lazım
         ObjLoader.load(gl, 'assets/' + asset.file)
             .then(mesh => {
-                const name = asset.name + " " + (objects.length + 1);
-                const newObj = addObjectToScene(name, 'custom', [0, 2, 0]);
+                // Asset ismini kullanarak obje oluştur
+                const newObj = addObjectToScene(asset.name, 'custom', [0, 2, 0]);
                 newObj.model = mesh;
                 newObj.scale = [0.5, 0.5, 0.5];
                 selectLastObject();
             })
-            .catch(err => alert("Model yüklenemedi: assets/" + asset.file + "\nDosya var mı?"));
+            .catch(err => alert("Model yüklenemedi: assets/" + asset.file));
     }
     else if (asset.type === 'texture') {
-        // Doku dosyasını yükle ve SEÇİLİ objeye uygula
         if (selectedObjectIndex === -1 || !objects[selectedObjectIndex]) {
             alert("Önce bir obje seçmelisin!");
             return;
         }
-        
         const texture = loadTexture(gl, 'assets/' + asset.file);
         objects[selectedObjectIndex].texture = texture;
+        objects[selectedObjectIndex].textureName = asset.name; // İsmi kaydet
+        syncGUItoObject();
     }
 }
 
 // --- NESNE YÖNETİMİ ---
 
 function addObjectToScene(name, type, position) {
+    // İsim çakışmasını önlemek için numara ekle (Örn: Küp 1, Küp 2)
+    let finalName = name;
+    let counter = 1;
+    // Basit bir benzersiz isim kontrolü
+    while(objects.some(o => o.name === finalName)) {
+        finalName = `${name} (${counter++})`;
+    }
+
     const obj = {
-        name: name,
+        name: finalName,
         type: type, 
         position: position || [0, 0, 0],
         rotation: [0, 0, 0], 
         scale: [1, 1, 1],
         texture: defaultTexture,
+        textureName: "Varsayılan", // YENİ: Doku ismi takibi
         model: geometryTemplates[type] || null 
     };
     objects.push(obj);
@@ -253,10 +240,11 @@ function addObjectToScene(name, type, position) {
     return obj;
 }
 
-function spawnObject(type) {
+function spawnObject(type, baseName) {
     const x = (Math.random() - 0.5) * 5;
     const z = (Math.random() - 0.5) * 5;
-    const name = type.charAt(0).toUpperCase() + type.slice(1) + " " + (objects.length + 1);
+    // Eğer baseName gelmezse tipi kullan
+    const name = baseName || (type.charAt(0).toUpperCase() + type.slice(1));
     addObjectToScene(name, type, [x, 0, z]);
     selectLastObject();
 }
@@ -295,12 +283,14 @@ function initGUI() {
     mainFolder.add(guiState, 'deleteSelected').name('Seçiliyi SİL');
     mainFolder.open();
 
-    const transformFolder = gui.addFolder('Transform');
+    const transformFolder = gui.addFolder('Transform & Materyal');
     transformFolder.add(guiState, 'posX', -20, 20).onChange(updateObjectFromGUI);
     transformFolder.add(guiState, 'posY', -10, 20).onChange(updateObjectFromGUI);
     transformFolder.add(guiState, 'posZ', -20, 20).onChange(updateObjectFromGUI);
     transformFolder.add(guiState, 'scale', 0.1, 5.0).onChange(updateObjectFromGUI);
     transformFolder.add(guiState, 'rotY', 0, 360).onChange(updateObjectFromGUI);
+    // YENİ: Sadece bilgi amaçlı doku ismi alanı (listen() ile anlık güncellenir)
+    transformFolder.add(guiState, 'currentTextureName').name('Aktif Doku').listen(); 
     transformFolder.open();
 
     const lightFolder = gui.addFolder('Işık');
@@ -314,7 +304,6 @@ function updateGUIList() {
     const select = objListController.domElement.querySelector('select');
     select.innerHTML = '';
     
-    // "Seçim Yok" seçeneği ekle
     const defaultOpt = document.createElement('option');
     defaultOpt.value = -1;
     defaultOpt.text = objects.length === 0 ? "(Sahne Boş)" : "(Obje Seçin)";
@@ -323,7 +312,7 @@ function updateGUIList() {
     objects.forEach((o, i) => {
         const opt = document.createElement('option');
         opt.value = i;
-        opt.text = o.name;
+        opt.text = o.name; // Artık temiz isimler görünecek
         select.add(opt);
     });
     objListController.setValue(selectedObjectIndex);
@@ -332,6 +321,7 @@ function updateGUIList() {
 function syncGUItoObject() {
     if (selectedObjectIndex === -1 || !objects[selectedObjectIndex]) {
         guiState.selectedName = -1;
+        guiState.currentTextureName = "-";
         return;
     }
     const obj = objects[selectedObjectIndex];
@@ -340,6 +330,8 @@ function syncGUItoObject() {
     guiState.posZ = obj.position[2];
     guiState.scale = obj.scale[0]; 
     guiState.rotY = obj.rotation[1];
+    guiState.currentTextureName = obj.textureName || "Varsayılan"; // Dokuyu göster
+    
     gui.updateDisplay();
 }
 
@@ -353,17 +345,34 @@ function updateObjectFromGUI() {
     obj.rotation[1] = guiState.rotY;
 }
 
-// --- DOSYA YÜKLEME ---
+// --- DOSYA YÜKLEME (YENİ: Dosya İsimlerini İşleme) ---
+
+// Dosya ismini temizleyen yardımcı fonksiyon
+function formatFileName(fileName) {
+    // Uzantıyı kaldır (örn: "araba_modeli.obj" -> "araba_modeli")
+    let name = fileName.replace(/\.[^/.]+$/, "");
+    // Alt çizgileri boşluk yap
+    name = name.replace(/_/g, " ");
+    // İlk harfleri büyüt
+    return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
 function setupFileInputs() {
+    // OBJ Yükleme
     document.getElementById('objInput').addEventListener('change', function(e) {
         const file = e.target.files[0];
         if (!file) return;
+
+        // Dosya ismini al ve temizle
+        const cleanName = formatFileName(file.name);
+
         const reader = new FileReader();
         reader.onload = function(e) {
             const data = ObjLoader.parse(e.target.result);
             const mesh = ObjLoader.createMesh(gl, data);
-            const name = "Model " + (objects.length + 1);
-            const newObj = addObjectToScene(name, 'custom', [0, 2, 0]);
+            
+            // Temizlenmiş ismi kullan
+            const newObj = addObjectToScene(cleanName, 'custom', [0, 2, 0]);
             newObj.model = mesh;
             selectLastObject();
         };
@@ -371,9 +380,13 @@ function setupFileInputs() {
         this.value = '';
     });
 
+    // Texture Yükleme
     document.getElementById('textureInput').addEventListener('change', function(e) {
         const file = e.target.files[0];
         if (!file) return;
+
+        const cleanName = formatFileName(file.name); // Texture ismini al
+
         const reader = new FileReader();
         reader.onload = function(e) {
             const img = new Image();
@@ -382,7 +395,12 @@ function setupFileInputs() {
                 gl.bindTexture(gl.TEXTURE_2D, newTex);
                 gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
                 gl.generateMipmap(gl.TEXTURE_2D);
-                if (selectedObjectIndex !== -1) objects[selectedObjectIndex].texture = newTex;
+                
+                if (selectedObjectIndex !== -1) {
+                    objects[selectedObjectIndex].texture = newTex;
+                    objects[selectedObjectIndex].textureName = cleanName; // İsmi kaydet
+                    syncGUItoObject(); // GUI'yi güncelle
+                }
             };
             img.src = e.target.result;
         };
@@ -395,7 +413,6 @@ function setupFileInputs() {
 function loadTexture(gl, url) {
     const texture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, texture);
-    // Yüklenene kadar geçici gri renk
     const pixel = new Uint8Array([128, 128, 128, 255]); 
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
     const image = new Image();
@@ -404,8 +421,6 @@ function loadTexture(gl, url) {
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
         gl.generateMipmap(gl.TEXTURE_2D);
     };
-    // Dosya yoksa hata vermemesi için
-    image.onerror = function() { console.warn("Texture bulunamadı: " + url); };
     image.src = url;
     return texture;
 }
