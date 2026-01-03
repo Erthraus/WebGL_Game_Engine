@@ -1,4 +1,4 @@
-/* --- GENEL AYARLAR --- */
+/* --- GENERAL SETTINGS --- */
 body {
     margin: 0;
     padding: 0;
@@ -15,7 +15,7 @@ canvas {
     outline: none;
 }
 
-/* --- SOL ÜST BİLGİ PANELİ --- */
+/* --- TOP-LEFT INFO PANEL --- */
 #info-panel {
     position: absolute;
     top: 20px;
@@ -59,7 +59,7 @@ canvas {
     font-size: 12px;
 }
 
-/* --- ASSETS PANEL (DÜZELTİLMİŞ) --- */
+/* --- ASSETS PANEL (FIXED) --- */
 #assets-panel {
     position: absolute;
     bottom: 0;
@@ -73,25 +73,25 @@ canvas {
     overflow: hidden;
 }
 
-/* HTML'deki eski başlığı gizle (Yeni tasarımda başlıklar içeride) */
+/* Hide the old header in HTML (New design has headers inside groups) */
 #assets-panel .panel-header {
     display: none !important;
 }
 
-/* İç Taşıyıcı: Grupları yan yana dizecek olan asıl kısım bu */
+/* Inner Container: This is what aligns groups side-by-side */
 .assets-container {
-    display: flex;       /* ÖNEMLİ: Yan yana dizilimi sağlar */
-    flex-direction: row; /* Soldan sağa */
+    display: flex;       /* IMPORTANT: Enables horizontal layout */
+    flex-direction: row; /* Left to right */
     width: 100%;
     height: 100%;
 }
 
-/* Varlık Grupları */
+/* Asset Groups */
 .asset-group {
     display: flex;
     flex-direction: column;
     border-right: 1px solid #333;
-    flex: 1; /* Tüm gruplar eşit genişliğe yayılır */
+    flex: 1; /* All groups spread evenly */
     min-width: 0; 
     height: 100%;
     background: #252525;
@@ -133,7 +133,7 @@ canvas {
     border-radius: 4px;
 }
 
-/* --- ASSET KARTI --- */
+/* --- ASSET CARD --- */
 .asset-card {
     min-width: 75px;
     width: 75px;
@@ -177,7 +177,7 @@ canvas {
     text-overflow: ellipsis;
 }
 
-/* Tehlikeli Buton */
+/* Danger Button Style */
 .asset-card.danger {
     border-color: #522;
     background: linear-gradient(145deg, #2a1a1a, #302020);

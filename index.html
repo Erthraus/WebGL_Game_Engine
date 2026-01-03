@@ -2,27 +2,29 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>BBM 414 WebGL2 Project</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebGL2 Game Engine Project</title>
     <link rel="stylesheet" href="style.css">
     <style>
-        body { margin: 0; overflow: hidden; }
+        body { margin: 0; overflow: hidden; background-color: #000; }
         canvas { display: block; width: 100vw; height: 100vh; }
     </style>
 </head>
 <body>
     <div id="info-panel">
         <h1>WebGL2 Game Engine</h1>
-        <p><span class="key">W</span> <span class="key">A</span> <span class="key">S</span> <span class="key">D</span> : Hareket Et</p>
-        <p><span class="key">Fare</span> : Etrafa Bak</p>
-        <p><span class="key">Q</span> <span class="key">E</span> : Aşağı / Yukarı</p>
-        <p><span class="key">Tıkla</span> : Kitle / Başla</p>
+        <p><span class="key">W</span> <span class="key">A</span> <span class="key">S</span> <span class="key">D</span> : Move</p>
+        <p><span class="key">Mouse</span> : Look Around</p>
+        <p><span class="key">Q</span> <span class="key">E</span> : Down / Up</p>
+        <p><span class="key">Click</span> : Lock Cursor / Start</p>
     </div>
 
     <canvas id="glCanvas"></canvas>
 
     <div id="assets-panel">
         <div class="panel-header">Assets Browser</div>
-        <div class="assets-container" id="assetsContainer"></div>
+        <div class="assets-container" id="assetsContainer">
+            </div>
     </div>
     
     <input type="file" id="objInput" accept=".obj" style="display: none;">
@@ -30,6 +32,7 @@
     
     <script src="lib/gl-matrix-min.js"></script> 
     <script src="lib/dat.gui.min.js"></script>
+    
     <script src="src/main.js" type="module"></script>
 </body>
 </html>
